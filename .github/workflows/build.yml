@@ -110,7 +110,16 @@ jobs:
           } else {
             Copy-Item -Force $src.FullName $vst3
           }
+          # Sidecar next to the .vst3 bundle (findUiDist walks up to this).
           Copy-Item -Recurse -Force "ui/dist/*" "$vst3/ui/dist/"
+          # Also next to the module binary inside Contents/<arch>/ for hosts that
+          # resolve resources relative to the executable path only.
+          $archDir = Get-ChildItem "$vst3" -Directory -Recurse -Filter "x86_64-win" |
+            Select-Object -First 1
+          if ($archDir) {
+            New-Item -ItemType Directory -Force -Path "$($archDir.FullName)/ui/dist" | Out-Null
+            Copy-Item -Recurse -Force "ui/dist/*" "$($archDir.FullName)/ui/dist/"
+          }
           Compress-Archive -Path "$vst3/*" -DestinationPath "dist/Namplifier-windows-vst3.zip" -Force
 
       - name: Upload artefacts
@@ -191,6 +200,19 @@ jobs:
           mkdir -p "$STAGE/ui/dist"
           ditto "$VST3" "$STAGE/Namplifier.vst3"
           cp -R ui/dist/. "$STAGE/ui/dist/"
+          # Also embed ui/dist beside the module binary inside the bundle.
+          ARCH_DIR=$(find "$STAGE/Namplifier.vst3" -type d \( -name "MacOS" -o -name "x86_64-osx" -o -name "arm64-osx" -o -name "Contents" \) | head -n 1)
+          # Prefer Contents/Resources or next to the binary in MacOS/
+          MACOS_DIR=$(find "$STAGE/Namplifier.vst3" -type d -name "MacOS" | head -n 1)
+          if [ -n "$MACOS_DIR" ]; then
+            mkdir -p "$MACOS_DIR/ui/dist"
+            cp -R ui/dist/. "$MACOS_DIR/ui/dist/"
+          fi
+          RESOURCES_DIR=$(find "$STAGE/Namplifier.vst3" -type d -name "Resources" | head -n 1)
+          if [ -n "$RESOURCES_DIR" ]; then
+            mkdir -p "$RESOURCES_DIR/ui/dist"
+            cp -R ui/dist/. "$RESOURCES_DIR/ui/dist/"
+          fi
           ditto -c -k --keepParent "$STAGE" dist/Namplifier-macos-vst3.zip
 
           AU=$(find "$ART/AU" -name "Namplifier.component" -type d | head -n 1)

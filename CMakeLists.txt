@@ -85,20 +85,26 @@ if(NOT EXISTS "${UI_DIST_DIR}/index.html")
   file(WRITE "${UI_DIST_DIR}/index.html" "<!DOCTYPE html><html><body><p>Build the UI with npm run build in ui/</p></body></html>")
 endif()
 
-juce_add_binary_data(NamplifierUiData SOURCES
-  "${UI_DIST_DIR}/index.html"
+file(GLOB_RECURSE UI_EMBED_FILES CONFIGURE_DEPENDS
+  "${UI_DIST_DIR}/*"
 )
-
-# Collect UI assets if present (js/css) for BinaryData
-file(GLOB UI_ASSETS CONFIGURE_DEPENDS
-  "${UI_DIST_DIR}/assets/*"
-)
-if(UI_ASSETS)
-  juce_add_binary_data(NamplifierUiAssets SOURCES ${UI_ASSETS})
-  set(UI_ASSET_LIB NamplifierUiAssets)
-else()
-  set(UI_ASSET_LIB "")
+list(FILTER UI_EMBED_FILES EXCLUDE REGEX "\\.(map)$")
+if(NOT UI_EMBED_FILES)
+  set(UI_EMBED_FILES "${UI_DIST_DIR}/index.html")
 endif()
+
+file(READ "${UI_DIST_DIR}/index.html" _namplifier_ui_index LIMIT 200)
+if(_namplifier_ui_index MATCHES "Build the UI with npm")
+  message(WARNING "ui/dist looks like a stub — run npm run build in ui/ before configuring so the plugin embeds the real UI.")
+endif()
+
+# Single BinaryData namespace so the editor can serve index + JS/CSS without a disk ui/dist.
+juce_add_binary_data(NamplifierUiData
+  HEADER_NAME NamplifierUiData.h
+  NAMESPACE NamplifierUi
+  SOURCES ${UI_EMBED_FILES}
+)
+set(UI_ASSET_LIB "")
 
 set(Namplifier_FORMATS VST3 Standalone)
 if(APPLE)
@@ -184,7 +190,6 @@ target_link_libraries(Namplifier
   PRIVATE
     nam_core
     NamplifierUiData
-    ${UI_ASSET_LIB}
     juce::juce_audio_utils
     juce::juce_dsp
     juce::juce_gui_extra

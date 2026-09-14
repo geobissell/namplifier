@@ -81,6 +81,8 @@ Namplifier.exe
 ui/dist/...
 ```
 
+VST3 install: keep `ui/dist` next to `Namplifier.vst3` (as in the release zip), or rely on the UI embedded in the binary (CI builds). Do not install only the `.vst3` file from a zip that also contains `ui/dist` unless you rebuilt with a full `ui/dist` at CMake configure time.
+
 ## CI / Releases
 
 Pushing or merging to `main` / `master` runs `.github/workflows/build.yml`:

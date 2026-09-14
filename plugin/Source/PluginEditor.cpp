@@ -1,5 +1,5 @@
 #include "PluginEditor.h"
-#include "BinaryData.h"
+#include "NamplifierUiData.h"
 #include "dsp/CabDetect.h"
 #include <juce_cryptography/juce_cryptography.h>
 #include <cstdint>
@@ -17,6 +17,32 @@ juce::String mimeFor (const juce::String& path)
   if (ext == "json") return "application/json";
   if (ext == "woff2") return "font/woff2";
   return "application/octet-stream";
+}
+
+std::optional<juce::WebBrowserComponent::Resource> resourceFromBinaryData (const juce::String& path)
+{
+  const auto leaf = path.fromLastOccurrenceOf ("/", false, false);
+
+  for (int i = 0; i < NamplifierUi::namedResourceListSize; ++i)
+  {
+    const auto* original = NamplifierUi::originalFilenames[i];
+    if (original == nullptr)
+      continue;
+
+    const juce::String orig (original);
+    if (path != orig && leaf != orig && ! path.endsWithIgnoreCase ("/" + orig))
+      continue;
+
+    int size = 0;
+    if (auto* data = NamplifierUi::getNamedResource (NamplifierUi::namedResourceList[i], size))
+    {
+      if (size <= 0)
+        continue;
+      std::vector<std::byte> bytes ((const std::byte*) data, (const std::byte*) data + (size_t) size);
+      return juce::WebBrowserComponent::Resource { std::move (bytes), mimeFor (path.isNotEmpty() ? path : orig) };
+    }
+  }
+  return std::nullopt;
 }
 
 juce::String base64Url (const juce::MemoryBlock& mb)
@@ -48,17 +74,36 @@ juce::File findUiDist()
     return {};
   };
 
-  // Prefer a ui/dist next to the app (shareable package) or cwd (dev).
+  // Standalone: ui/dist next to the exe.
+  // VST3: binary is inside Something.vst3/Contents/<arch>/ — also search up the
+  // bundle and the install folder (release zip puts ui/dist beside the .vst3).
   auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
+  auto dir = exe.getParentDirectory();
+  for (int depth = 0; depth < 8 && dir.exists(); ++depth)
+  {
+    if (auto d = tryDir (dir.getChildFile ("ui/dist")); d.exists())
+      return d;
+
+    if (dir.getFileName().endsWithIgnoreCase (".vst3"))
+    {
+      if (auto d = tryDir (dir.getSiblingFile ("ui/dist")); d.exists())
+        return d;
+      if (auto d = tryDir (dir.getParentDirectory().getChildFile ("ui/dist")); d.exists())
+        return d;
+    }
+
+    auto parent = dir.getParentDirectory();
+    if (parent == dir)
+      break;
+    dir = parent;
+  }
+
   for (auto f : {
-         exe.getSiblingFile ("ui/dist"),
-         exe.getParentDirectory().getChildFile ("ui/dist"),
          juce::File::getCurrentWorkingDirectory().getChildFile ("ui/dist"),
          juce::File::getCurrentWorkingDirectory().getChildFile ("../ui/dist")
        })
   {
-    auto d = tryDir (f);
-    if (d.exists())
+    if (auto d = tryDir (f); d.exists())
       return d;
   }
   return {};
@@ -183,13 +228,10 @@ NamplifierAudioProcessorEditor::getResource (const juce::String& url) const
     }
   }
 
-  // Fallback embedded index
-  if (path == "index.html")
-  {
-    std::vector<std::byte> data ((const std::byte*) BinaryData::index_html,
-                                 (const std::byte*) BinaryData::index_html + BinaryData::index_htmlSize);
-    return juce::WebBrowserComponent::Resource { std::move (data), "text/html" };
-  }
+  // Embedded ui/dist (index + assets) — needed when the host loads the VST from a
+  // folder that does not include the release zip's ui/dist sidecar.
+  if (auto embedded = resourceFromBinaryData (path))
+    return embedded;
 
   return std::nullopt;
 }
