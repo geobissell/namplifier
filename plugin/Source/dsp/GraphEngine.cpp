@@ -610,8 +610,7 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
     {
       if (mPluginHosted)
       {
-        // DAW owns routing. Mix every host input to mono so mono-on-L, mono-on-R,
-        // or a leftover standalone "In 2" param cannot starve the amp.
+        // DAW owns routing — use the host buffer, ignore standalone device-channel picks.
         mInputChannel = 0;
         if (numChans <= 1)
         {

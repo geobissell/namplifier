@@ -3,7 +3,6 @@
 
 NamplifierAudioProcessor::NamplifierAudioProcessor()
   : AudioProcessor (
-      // wrapperType is valid here (JUCE sets it via createPluginFilterOfType).
       wrapperType == wrapperType_Standalone
         ? BusesProperties()
             .withInput ("Input", juce::AudioChannelSet::discreteChannels (8), true)
@@ -33,7 +32,6 @@ bool NamplifierAudioProcessor::isBusesLayoutSupported (const BusesLayout& layout
 
   if (wrapperType == wrapperType_Standalone)
   {
-    // Standalone device I/O can be multi-channel (Host Output / input picks).
     if (mainIn.isDisabled() || mainOut.isDisabled())
       return false;
     if (mainIn.size() < 1 || mainIn.size() > 16)
@@ -43,8 +41,7 @@ bool NamplifierAudioProcessor::isBusesLayoutSupported (const BusesLayout& layout
     return true;
   }
 
-  // Standard JUCE FX rule (see GainPluginDemo): host in/out must match and stay enabled.
-  // Allowing mismatched mono/stereo breaks Reaper VST3 bus negotiation → silent input.
+  // Standard JUCE FX: matching mono/stereo main buses.
   if (mainIn != mainOut || mainIn.isDisabled())
     return false;
 
@@ -52,20 +49,9 @@ bool NamplifierAudioProcessor::isBusesLayoutSupported (const BusesLayout& layout
          || mainIn == juce::AudioChannelSet::stereo();
 }
 
-bool NamplifierAudioProcessor::canAddBus (bool) const
-{
-  return false;
-}
-
-bool NamplifierAudioProcessor::canRemoveBus (bool) const
-{
-  return false;
-}
-
 void NamplifierAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
   juce::ScopedNoDenormals noDenormals;
-  graphEngine.setPluginHosted (wrapperType != wrapperType_Standalone);
   graphEngine.setHostChannelCounts (getTotalNumInputChannels(), getTotalNumOutputChannels());
 
   for (auto i = getTotalNumInputChannels(); i < getTotalNumOutputChannels(); ++i)

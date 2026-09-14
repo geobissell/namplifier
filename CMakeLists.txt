@@ -152,8 +152,7 @@ juce_add_plugin(Namplifier
   EDITOR_WANTS_KEYBOARD_FOCUS TRUE
   COPY_PLUGIN_AFTER_BUILD FALSE
   PLUGIN_MANUFACTURER_CODE Namp
-  # Bumped from Namp → Nmp2 so hosts drop stale pin/bus maps from the old 8-ch discrete builds.
-  PLUGIN_CODE Nmp2
+  PLUGIN_CODE Namp
   FORMATS ${Namplifier_FORMATS}
   PRODUCT_NAME "Namplifier"
   VST3_CATEGORIES "Fx"
