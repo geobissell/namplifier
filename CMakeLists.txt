@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.24)
 
 project(Namplifier VERSION 0.1.0)
 
@@ -42,25 +42,6 @@ set(NAM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/NeuralAmpModelerCore")
 set(ADT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/AudioDSPTools")
 set(EIGEN_ROOT "${NAM_ROOT}/Dependencies/eigen")
 set(NLOHMANN_ROOT "${NAM_ROOT}/Dependencies/nlohmann")
-
-# MSVC drops unused static registrars from nam_core — keep WaveNet / SlimmableContainer linked.
-set(_nam_force_link_patch "${CMAKE_CURRENT_SOURCE_DIR}/third_party/patches/NeuralAmpModelerCore-force-link.patch")
-if(EXISTS "${NAM_ROOT}/NAM/container.h" AND EXISTS "${_nam_force_link_patch}")
-  file(READ "${NAM_ROOT}/NAM/container.h" _nam_container_h)
-  if(NOT _nam_container_h MATCHES "force_link_slimmable_container")
-    find_package(Git REQUIRED)
-    execute_process(
-      COMMAND "${GIT_EXECUTABLE}" apply --whitespace=nowarn "${_nam_force_link_patch}"
-      WORKING_DIRECTORY "${NAM_ROOT}"
-      RESULT_VARIABLE _nam_patch_rc
-      ERROR_VARIABLE _nam_patch_err
-    )
-    if(NOT _nam_patch_rc EQUAL 0)
-      message(FATAL_ERROR "Failed to apply NAM force-link patch: ${_nam_patch_err}")
-    endif()
-    message(STATUS "Applied third_party/patches/NeuralAmpModelerCore-force-link.patch")
-  endif()
-endif()
 
 file(GLOB_RECURSE NAM_SOURCES CONFIGURE_DEPENDS
   "${NAM_ROOT}/NAM/*.cpp"
@@ -156,7 +137,6 @@ target_sources(Namplifier PRIVATE
   plugin/Source/dsp/GraphModel.h
   plugin/Source/dsp/Nodes.cpp
   plugin/Source/dsp/Nodes.h
-  plugin/Source/dsp/NamForceLink.cpp
   plugin/Source/dsp/ResamplingNAM.h
   plugin/Source/tone3000/Tone3000Client.cpp
   plugin/Source/tone3000/Tone3000Client.h
@@ -215,18 +195,12 @@ target_link_libraries(Namplifier
     juce::juce_recommended_warning_flags
 )
 
-# NAM registers architectures via static initializers; MSVC drops those from .lib unless forced.
-if(MSVC)
-  if(TARGET Namplifier)
-    target_link_options(Namplifier PRIVATE "/WHOLEARCHIVE:$<TARGET_FILE:nam_core>")
-  endif()
-  if(TARGET Namplifier_Standalone)
-    target_link_options(Namplifier_Standalone PRIVATE "/WHOLEARCHIVE:$<TARGET_FILE:nam_core>")
-  endif()
-  if(TARGET Namplifier_VST3)
-    target_link_options(Namplifier_VST3 PRIVATE "/WHOLEARCHIVE:$<TARGET_FILE:nam_core>")
-  endif()
-endif()
+# NAM registers architectures via static initializers; linkers drop those from .a/.lib unless forced.
+foreach (_nam_tgt IN ITEMS Namplifier_Standalone Namplifier_VST3 Namplifier_AU)
+  if (TARGET ${_nam_tgt})
+    target_link_libraries(${_nam_tgt} PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>")
+  endif ()
+endforeach ()
 
 if(MSVC)
   target_compile_options(Namplifier PRIVATE /wd4244 /wd4267 /wd4996)

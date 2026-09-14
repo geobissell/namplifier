@@ -21,9 +21,9 @@ NAM / NAM A2 amp sim VST3 with freeform routing, Tone3000 browse, a local Librar
 ## Requirements
 
 - Windows 10/11
-- CMake 3.22+
+- CMake 3.24+
 - Visual Studio 2022/2026 with C++ desktop workload
-- Node.js 18+ (UI)
+- Node.js 20+ (UI)
 - WebView2 Runtime + NuGet package `Microsoft.Web.WebView2` 1.0.2903.40
 
 ## Tone3000 attribution
