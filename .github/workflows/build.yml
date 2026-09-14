@@ -114,7 +114,7 @@ jobs:
           Compress-Archive -Path "$vst3/*" -DestinationPath "dist/Namplifier-windows-vst3.zip" -Force
 
       - name: Upload artefacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows
           path: |
@@ -207,7 +207,7 @@ jobs:
           ls -la dist
 
       - name: Upload artefacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: macos
           path: |
@@ -227,13 +227,13 @@ jobs:
 
     steps:
       - name: Download Windows artefacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: windows
           path: dist
 
       - name: Download macOS artefacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: macos
           path: dist
