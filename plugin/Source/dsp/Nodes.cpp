@@ -90,30 +90,9 @@ void NamRuntimeNode::processMono (float* buffer, int numSamples)
   if (bypass || mModel == nullptr)
     return;
 
-  if (numSamples > mMaxBlock)
-    prepare (mSampleRate, numSamples);
-
-  // High-gain NAMs turn near-silence / denormal noise into a constant hiss.
-  // Gate well below a real guitar but above digital floor (~-80 dBFS).
-  float inPeak = 0.0f;
-  for (int i = 0; i < numSamples; ++i)
-    inPeak = juce::jmax (inPeak, std::abs (buffer[i]));
-  if (inPeak < 1.0e-4f)
-  {
-    juce::FloatVectorOperations::clear (buffer, numSamples);
-    return;
-  }
-
   mInPtr[0] = buffer;
   mOutPtr[0] = mScratch.data();
-  try
-  {
-    mModel->process (mInPtr, mOutPtr, numSamples);
-  }
-  catch (...)
-  {
-    return;
-  }
+  mModel->process (mInPtr, mOutPtr, numSamples);
   juce::FloatVectorOperations::copy (buffer, mScratch.data(), numSamples);
 
   // Match official NAM plugin "Normalized" mode — without this, raw model

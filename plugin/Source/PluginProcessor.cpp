@@ -2,50 +2,72 @@
 #include "PluginEditor.h"
 
 NamplifierAudioProcessor::NamplifierAudioProcessor()
-  : AudioProcessor (BusesProperties()
-                      .withInput ("Input", juce::AudioChannelSet::stereo(), true)
-                      .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
+  : AudioProcessor (
+      // wrapperType is valid here (JUCE sets it via createPluginFilterOfType).
+      wrapperType == wrapperType_Standalone
+        ? BusesProperties()
+            .withInput ("Input", juce::AudioChannelSet::discreteChannels (8), true)
+            .withOutput ("Output", juce::AudioChannelSet::discreteChannels (8), true)
+        : BusesProperties()
+            .withInput ("Input", juce::AudioChannelSet::stereo(), true)
+            .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
-  graphEngine.setDawHosted (wrapperType != wrapperType_Standalone);
+  graphEngine.setPluginHosted (wrapperType != wrapperType_Standalone);
 }
 
 NamplifierAudioProcessor::~NamplifierAudioProcessor() = default;
 
 void NamplifierAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-  graphEngine.setDawHosted (wrapperType != wrapperType_Standalone);
+  graphEngine.setPluginHosted (wrapperType != wrapperType_Standalone);
   graphEngine.setHostChannelCounts (getTotalNumInputChannels(), getTotalNumOutputChannels());
   graphEngine.prepare (sampleRate, samplesPerBlock);
-  setLatencySamples (graphEngine.getLatencySamples());
 }
 
 void NamplifierAudioProcessor::releaseResources() {}
 
 bool NamplifierAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-  const auto inns = layouts.getMainInputChannelSet();
-  const auto outs = layouts.getMainOutputChannelSet();
+  const auto& mainIn = layouts.getMainInputChannelSet();
+  const auto& mainOut = layouts.getMainOutputChannelSet();
 
-  // Never accept a disabled main bus as a valid layout. Doing so lets some hosts
-  // "activate" us with 0 input channels → silence into high-gain NAM → hiss, and
-  // the processBlock clear-loop then wipes the entire buffer when numIns == 0.
-  if (inns.isDisabled() || outs.isDisabled())
+  if (wrapperType == wrapperType_Standalone)
+  {
+    // Standalone device I/O can be multi-channel (Host Output / input picks).
+    if (mainIn.isDisabled() || mainOut.isDisabled())
+      return false;
+    if (mainIn.size() < 1 || mainIn.size() > 16)
+      return false;
+    if (mainOut.size() < 1 || mainOut.size() > 16)
+      return false;
+    return true;
+  }
+
+  // Standard JUCE FX rule (see GainPluginDemo): host in/out must match and stay enabled.
+  // Allowing mismatched mono/stereo breaks Reaper VST3 bus negotiation → silent input.
+  if (mainIn != mainOut || mainIn.isDisabled())
     return false;
 
-  const bool inOk = inns == juce::AudioChannelSet::mono()
-                    || inns == juce::AudioChannelSet::stereo();
-  const bool outOk = outs == juce::AudioChannelSet::mono()
-                     || outs == juce::AudioChannelSet::stereo();
-  return inOk && outOk;
+  return mainIn == juce::AudioChannelSet::mono()
+         || mainIn == juce::AudioChannelSet::stereo();
+}
+
+bool NamplifierAudioProcessor::canAddBus (bool) const
+{
+  return false;
+}
+
+bool NamplifierAudioProcessor::canRemoveBus (bool) const
+{
+  return false;
 }
 
 void NamplifierAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
   juce::ScopedNoDenormals noDenormals;
-  graphEngine.setDawHosted (wrapperType != wrapperType_Standalone);
+  graphEngine.setPluginHosted (wrapperType != wrapperType_Standalone);
   graphEngine.setHostChannelCounts (getTotalNumInputChannels(), getTotalNumOutputChannels());
 
-  // Clear only extra output channels; keep host input intact for the graph.
   for (auto i = getTotalNumInputChannels(); i < getTotalNumOutputChannels(); ++i)
     buffer.clear (i, 0, buffer.getNumSamples());
 

@@ -79,7 +79,6 @@ public:
   void stageModel (std::unique_ptr<ResamplingNAM> model);
   void applyStaging();
   bool hasModel() const { return mModel != nullptr || mHasStaged.load(); }
-  int getLatency() const { return mModel != nullptr ? mModel->getLatency() : 0; }
   juce::String filePath;
   juce::String displayName;
   juce::String lastError;

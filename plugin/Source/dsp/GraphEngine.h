@@ -36,10 +36,9 @@ public:
   int getActiveInputChannel() const;
   int getActiveOutputChannel() const { return mOutputChannel; }
   void setHostChannelCounts (int numIns, int numOuts);
-  /** When true (VST/AU), ignore per-node device channel picks — the DAW owns routing. */
-  void setDawHosted (bool dawHosted);
-  bool isDawHosted() const { return mDawHosted; }
-  int getLatencySamples() const;
+  /** VST/AU: ignore device channel picks — host owns I/O. Standalone: false. */
+  void setPluginHosted (bool pluginHosted);
+  bool isPluginHosted() const { return mPluginHosted; }
   int getNumInputChannels() const { return mHostIns; }
   int getNumOutputChannels() const { return mHostOuts; }
   juce::var getDspStatus() const;
@@ -81,7 +80,6 @@ private:
   juce::AudioBuffer<float> mMono;
   juce::AudioBuffer<float> mBranchA;
   juce::AudioBuffer<float> mBranchB;
-  juce::AudioBuffer<float> mDryCopy;
   std::atomic<float> mCpuLoad { 0.0f };
   std::atomic<float> mInputPeak { 0.0f };
   std::atomic<float> mOutputPeak { 0.0f };
@@ -91,7 +89,7 @@ private:
   std::atomic<float> mOutputPeakR { 0.0f };
   int mHostIns = 2;
   int mHostOuts = 2;
-  bool mDawHosted = false;
+  bool mPluginHosted = false;
   int mInputChannel = 0;
   int mOutputChannel = 0;
   float mOutputPan = 0.0f;

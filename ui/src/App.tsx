@@ -1213,6 +1213,9 @@ export default function App() {
         </button>
         <div className="cpu">
           {(cpu * 100).toFixed(0)}% CPU
+          {typeof io.numInputs === "number" ? (
+            <span className="muted"> · {io.numInputs}in/{io.numOutputs ?? 0}out</span>
+          ) : null}
           {io.buildId ? <span className="muted"> · {io.buildId}</span> : null}
         </div>
         <div

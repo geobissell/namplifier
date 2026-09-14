@@ -11,7 +11,7 @@ namespace namplifier
 GraphEngine::GraphEngine()
 {
   mDocument = GraphDocument::makeAmpCabStarter();
-  rebuildLocked(); // Must build runtime nodes — UI getGraph alone never calls setGraph.
+  rebuildLocked(); // Runtime must match document from the start (UI getGraph never setGraph).
   mWorker = std::thread ([this]
   {
     while (mRunning.load())
@@ -51,10 +51,8 @@ void GraphEngine::prepare (double sampleRate, int maxBlockSize)
     mMono.setSize (1, maxBlockSize);
     mBranchA.setSize (1, maxBlockSize);
     mBranchB.setSize (1, maxBlockSize);
-    mDryCopy.setSize (juce::jmax (2, mHostIns), maxBlockSize);
-    // Host may call prepare before any setGraph (common in VST). Ensure runtime exists.
-    if (mNodes.empty() && ! mDocument.nodes.empty())
-      rebuildLocked();
+    // Do not rebuildLocked here — that was dropping SR updates on reused NAM nodes
+    // and left the resampler stuck on the previous host rate (88.2k sounded bassless).
     for (auto& [id, node] : mNodes)
     {
       juce::String irPath;
@@ -96,22 +94,9 @@ void GraphEngine::setHostChannelCounts (int numIns, int numOuts)
   mHostOuts = juce::jmax (1, numOuts);
 }
 
-void GraphEngine::setDawHosted (bool dawHosted)
+void GraphEngine::setPluginHosted (bool pluginHosted)
 {
-  mDawHosted = dawHosted;
-}
-
-int GraphEngine::getLatencySamples() const
-{
-  int latency = 0;
-  std::lock_guard lock (mGraphMutex);
-  for (auto& [id, node] : mNodes)
-  {
-    juce::ignoreUnused (id);
-    if (auto* nam = dynamic_cast<NamRuntimeNode*> (node.get()))
-      latency = juce::jmax (latency, nam->getLatency());
-  }
-  return latency;
+  mPluginHosted = pluginHosted;
 }
 
 int GraphEngine::getActiveInputChannel() const
@@ -148,10 +133,6 @@ void GraphEngine::loadFileOntoNode (const juce::String& nodeId, const juce::File
   NodeType type = NodeType::Bypass;
   {
     std::lock_guard lock (mGraphMutex);
-    // UI can show mDocument while runtime was never built (getGraph without setGraph).
-    if (mNodes.empty() && ! mDocument.nodes.empty())
-      rebuildLocked();
-
     auto it = mNodes.find (nodeId);
     if (it == mNodes.end())
       return;
@@ -449,13 +430,18 @@ void GraphEngine::rebuildLocked()
     if (auto it = mNodes.find (desc.id); it != mNodes.end() && it->second->type() == desc.type)
     {
       auto* ir = dynamic_cast<IrRuntimeNode*> (it->second.get());
+      auto* nam = dynamic_cast<NamRuntimeNode*> (it->second.get());
       const juce::String prevIr = ir != nullptr ? ir->filePath : juce::String();
+      const juce::String prevNam = nam != nullptr ? nam->filePath : juce::String();
       it->second->setParams (desc.params);
       next[desc.id] = std::move (it->second);
-      // Reload IR when the path changes on an existing node (setParams no longer loads).
+      // setParams does not load files — reload when path appears/changes (same as IR).
       if (ir != nullptr && desc.params.filePath.isNotEmpty()
           && desc.params.filePath != prevIr)
         loadIrAsync (ir, juce::File (desc.params.filePath));
+      if (nam != nullptr && desc.params.filePath.isNotEmpty()
+          && (desc.params.filePath != prevNam || ! nam->hasModel()))
+        loadNamAsync (nam, juce::File (desc.params.filePath));
     }
     else
     {
@@ -504,15 +490,10 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
 
   std::lock_guard lock (mGraphMutex);
 
-  // Never wipe the host buffer if the runtime graph isn't built — that produced
-  // dead silence / noise-floor hiss in VST until the UI happened to call setGraph.
-  if (mNodes.empty() || mOrder.empty())
+  auto smoothPeak = [] (std::atomic<float>& slot, float peak)
   {
-    if (! mDocument.nodes.empty())
-      rebuildLocked();
-    if (mNodes.empty() || mOrder.empty())
-      return; // leave host buffer alone (passthrough)
-  }
+    slot.store (peak * 0.35f + slot.load() * 0.65f);
+  };
 
   auto channelPeak = [&] (int ch) -> float
   {
@@ -525,35 +506,19 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
     return peak;
   };
 
-  auto smoothPeak = [] (std::atomic<float>& slot, float peak)
-  {
-    slot.store (peak * 0.35f + slot.load() * 0.65f);
-  };
+  const int inCh = juce::jlimit (0, numChans - 1, mInputChannel);
 
-  // Meter host signal before input trim so VU reflects what the DAW is actually sending.
-  const float hostInL = channelPeak (0);
-  const float hostInR = channelPeak (numChans > 1 ? 1 : 0);
-  const float hostInPeak = juce::jmax (hostInL, hostInR);
-  smoothPeak (mInputPeakL, hostInL);
-  smoothPeak (mInputPeakR, hostInR);
+  // Meter host signal before input trim so the VU reflects what the DAW sent.
+  smoothPeak (mInputPeakL, channelPeak (0));
+  smoothPeak (mInputPeakR, channelPeak (numChans > 1 ? 1 : 0));
+  smoothPeak (mInputPeak, channelPeak (inCh));
 
-  // Keep a dry copy for failover if the graph somehow kills a live input.
-  // Reuse a member buffer — heap-allocating every callback caused standalone xruns/lag.
-  if (mDryCopy.getNumChannels() < numChans || mDryCopy.getNumSamples() < numSamples)
-    mDryCopy.setSize (numChans, numSamples, false, false, true);
-  for (int c = 0; c < numChans; ++c)
-    mDryCopy.copyFrom (c, 0, buffer, c, 0, numSamples);
-
-  // Global input trim — pull down hot interfaces before NAM
+  // Global input trim — pull down hot interfaces before NAM (common cause of HF fizz)
   const float inG = juce::Decibels::decibelsToGain (mMasterInDb.load());
   if (inG != 1.0f)
     buffer.applyGain (inG);
 
-  const int inCh = juce::jlimit (0, numChans - 1, mInputChannel);
-  if (mMono.getNumChannels() < 1 || mMono.getNumSamples() < numSamples)
-    mMono.setSize (1, numSamples, false, false, true);
   mMono.copyFrom (0, 0, buffer, inCh, 0, numSamples);
-  smoothPeak (mInputPeak, channelPeak (inCh));
 
   struct StereoSig
   {
@@ -643,11 +608,10 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
 
     if (node->type() == NodeType::Input)
     {
-      int ch = 0;
-      if (mDawHosted)
+      if (mPluginHosted)
       {
-        // DAW owns routing. Mix every host input channel to mono so mono-on-L,
-        // mono-on-R, or odd pin maps still feed the amp (Reaper pin connector).
+        // DAW owns routing. Mix every host input to mono so mono-on-L, mono-on-R,
+        // or a leftover standalone "In 2" param cannot starve the amp.
         mInputChannel = 0;
         if (numChans <= 1)
         {
@@ -668,39 +632,10 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
         continue;
       }
 
+      int ch = 0;
       if (auto* d = findDesc())
         ch = d->params.inputChannel;
       ch = juce::jlimit (0, numChans - 1, ch);
-
-      // Standalone: if the picked device channel is empty but another isn't,
-      // use the loudest (avoids silent NAM from a wrong interface channel).
-      if (numChans > 1)
-      {
-        auto blockPeak = [&] (int c) -> float
-        {
-          float peak = 0.0f;
-          const float* p = buffer.getReadPointer (c);
-          for (int i = 0; i < numSamples; ++i)
-            peak = juce::jmax (peak, std::abs (p[i]));
-          return peak;
-        };
-
-        const float selPeak = blockPeak (ch);
-        int bestCh = ch;
-        float bestPeak = selPeak;
-        for (int c = 0; c < numChans; ++c)
-        {
-          const float pk = blockPeak (c);
-          if (pk > bestPeak)
-          {
-            bestPeak = pk;
-            bestCh = c;
-          }
-        }
-        if (bestPeak > 1.0e-4f && selPeak < bestPeak * 0.05f)
-          ch = bestCh;
-      }
-
       mInputChannel = ch;
       juce::FloatVectorOperations::copy (outSig.L.data(), buffer.getReadPointer (ch), numSamples);
       juce::FloatVectorOperations::copy (outSig.R.data(), outSig.L.data(), numSamples);
@@ -845,7 +780,7 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
     if (signals.find (desc.id) == signals.end())
       continue;
 
-    const bool hostOut = ! mDawHosted
+    const bool hostOut = ! mPluginHosted
                          && (desc.params.fxId.equalsIgnoreCase ("host_out")
                              || desc.params.displayName.containsIgnoreCase ("host"));
     int hostL = 0;
@@ -876,7 +811,7 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
     const float balL = pan > 0.0f ? (1.0f - pan) : 1.0f;
     const float balR = pan < 0.0f ? (1.0f + pan) : 1.0f;
 
-    const bool hostOut = ! mDawHosted
+    const bool hostOut = ! mPluginHosted
                          && (desc.params.fxId.equalsIgnoreCase ("host_out")
                              || desc.params.displayName.containsIgnoreCase ("host"));
     int hostL = 0;
@@ -916,38 +851,29 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
   bool clipped = false;
 
   float meterL = 0.0f, meterR = 0.0f;
-  float outPeak = 0.0f;
   for (int ch = 0; ch < numChans; ++ch)
   {
     float* p = buffer.getWritePointer (ch);
     for (int i = 0; i < numSamples; ++i)
     {
       float s = p[i] * masterG;
-      if (s > 1.0f) { s = 1.0f; clipped = true; }
-      else if (s < -1.0f) { s = -1.0f; clipped = true; }
+      if (std::abs (s) >= 0.99f)
+        clipped = true;
+      s = juce::jlimit (-1.0f, 1.0f, s);
       p[i] = s;
-      const float a = std::abs (s);
-      outPeak = juce::jmax (outPeak, a);
-      if (ch == 0) meterL = juce::jmax (meterL, a);
-      if (ch == (numChans > 1 ? 1 : 0)) meterR = juce::jmax (meterR, a);
+      if (ch == 0)
+        meterL = juce::jmax (meterL, std::abs (s));
+      else if (ch == 1)
+        meterR = juce::jmax (meterR, std::abs (s));
     }
   }
+  if (numChans == 1)
+    meterR = meterL;
 
-  // If the DAW sent real audio but we produced near-silence (broken bus / empty
-  // graph path), fall back to dry host audio so the track isn't dead.
-  if (hostInPeak > 1.0e-4f && outPeak < 1.0e-5f)
-  {
-    for (int c = 0; c < numChans; ++c)
-      buffer.copyFrom (c, 0, mDryCopy, c, 0, numSamples);
-    meterL = hostInL;
-    meterR = hostInR;
-    outPeak = hostInPeak;
-  }
-
+  mWasClipping.store (clipped);
+  smoothPeak (mOutputPeak, juce::jmax (meterL, meterR));
   smoothPeak (mOutputPeakL, meterL);
   smoothPeak (mOutputPeakR, meterR);
-  smoothPeak (mOutputPeak, outPeak);
-  mWasClipping.store (clipped);
 
   const auto elapsed = std::chrono::steady_clock::now() - start;
   const double blockSec = (double) numSamples / mSampleRate;
