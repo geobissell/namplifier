@@ -14,30 +14,70 @@ NamplifierAudioProcessor::~NamplifierAudioProcessor() = default;
 void NamplifierAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
   graphEngine.setDawHosted (wrapperType != wrapperType_Standalone);
-  graphEngine.setHostChannelCounts (getTotalNumInputChannels(), getTotalNumOutputChannels());
+  // Prefer the main bus channel counts — not a permissive 2-in/4-out layout some hosts pick.
+  const int nIn = getBusCount (true) > 0 ? getChannelCountOfBus (true, 0) : getTotalNumInputChannels();
+  const int nOut = getBusCount (false) > 0 ? getChannelCountOfBus (false, 0) : getTotalNumOutputChannels();
+  graphEngine.setHostChannelCounts (nIn, nOut);
   graphEngine.prepare (sampleRate, samplesPerBlock);
+  setLatencySamples (graphEngine.getLatencySamples());
 }
 
 void NamplifierAudioProcessor::releaseResources() {}
 
 bool NamplifierAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-  const auto outs = layouts.getMainOutputChannelSet();
+  // Keep DAW routing simple. Permitting arbitrary 1–16 layouts let Reaper open us as
+  // "2 in 4 out" and confused pin mapping.
   const auto inns = layouts.getMainInputChannelSet();
-  if (outs.size() < 1 || outs.size() > 16)
-    return false;
-  if (inns.size() < 1 || inns.size() > 16)
-    return false;
-  return true;
+  const auto outs = layouts.getMainOutputChannelSet();
+  const bool inOk = inns == juce::AudioChannelSet::mono()
+                    || inns == juce::AudioChannelSet::stereo();
+  const bool outOk = outs == juce::AudioChannelSet::mono()
+                     || outs == juce::AudioChannelSet::stereo();
+  return inOk && outOk && ! inns.isDisabled() && ! outs.isDisabled();
 }
 
 void NamplifierAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
   juce::ScopedNoDenormals noDenormals;
-  graphEngine.setHostChannelCounts (getTotalNumInputChannels(), getTotalNumOutputChannels());
-  for (auto i = getTotalNumInputChannels(); i < getTotalNumOutputChannels(); ++i)
-    buffer.clear (i, 0, buffer.getNumSamples());
-  graphEngine.process (buffer);
+
+  graphEngine.setDawHosted (wrapperType != wrapperType_Standalone);
+
+  auto inBus = getBus (true, 0);
+  auto outBus = getBus (false, 0);
+  if (outBus == nullptr)
+  {
+    buffer.clear();
+    return;
+  }
+
+  auto out = getBusBuffer (buffer, false, 0);
+  const int numSamples = buffer.getNumSamples();
+  const int outCh = out.getNumChannels();
+
+  // Working buffer sized to main I/O so GraphEngine never sees padded aux channels.
+  const int inCh = (inBus != nullptr) ? getBusBuffer (buffer, true, 0).getNumChannels() : 0;
+  const int workCh = juce::jmax (1, juce::jmax (inCh, outCh));
+  if (mWorkBuffer.getNumChannels() != workCh || mWorkBuffer.getNumSamples() < numSamples)
+    mWorkBuffer.setSize (workCh, numSamples, false, false, true);
+  mWorkBuffer.clear();
+
+  if (inBus != nullptr)
+  {
+    auto in = getBusBuffer (buffer, true, 0);
+    const int copyCh = juce::jmin (in.getNumChannels(), mWorkBuffer.getNumChannels());
+    for (int c = 0; c < copyCh; ++c)
+      mWorkBuffer.copyFrom (c, 0, in, c, 0, numSamples);
+  }
+
+  graphEngine.setHostChannelCounts (mWorkBuffer.getNumChannels(), mWorkBuffer.getNumChannels());
+  graphEngine.process (mWorkBuffer);
+
+  const int copyOut = juce::jmin (outCh, mWorkBuffer.getNumChannels());
+  for (int c = 0; c < copyOut; ++c)
+    out.copyFrom (c, 0, mWorkBuffer, c, 0, numSamples);
+  for (int c = copyOut; c < outCh; ++c)
+    out.clear (c, 0, numSamples);
 }
 
 juce::AudioProcessorEditor* NamplifierAudioProcessor::createEditor()

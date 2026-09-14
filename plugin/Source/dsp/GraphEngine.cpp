@@ -98,6 +98,19 @@ void GraphEngine::setDawHosted (bool dawHosted)
   mDawHosted = dawHosted;
 }
 
+int GraphEngine::getLatencySamples() const
+{
+  int latency = 0;
+  std::lock_guard lock (mGraphMutex);
+  for (auto& [id, node] : mNodes)
+  {
+    juce::ignoreUnused (id);
+    if (auto* nam = dynamic_cast<NamRuntimeNode*> (node.get()))
+      latency = juce::jmax (latency, nam->getLatency());
+  }
+  return latency;
+}
+
 int GraphEngine::getActiveInputChannel() const
 {
   return mInputChannel;
@@ -484,19 +497,6 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
 
   std::lock_guard lock (mGraphMutex);
 
-  // Global input trim — pull down hot interfaces before NAM (common cause of HF fizz)
-  const float inG = juce::Decibels::decibelsToGain (mMasterInDb.load());
-  if (inG != 1.0f)
-    buffer.applyGain (inG);
-
-  const int inCh = juce::jlimit (0, numChans - 1, mInputChannel);
-  mMono.copyFrom (0, 0, buffer, inCh, 0, numSamples);
-
-  auto smoothPeak = [] (std::atomic<float>& slot, float peak)
-  {
-    slot.store (peak * 0.35f + slot.load() * 0.65f);
-  };
-
   auto channelPeak = [&] (int ch) -> float
   {
     if (ch < 0 || ch >= numChans)
@@ -508,9 +508,22 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
     return peak;
   };
 
-  // Always meter host stereo pair (ch 0/1) for the VU strip
+  auto smoothPeak = [] (std::atomic<float>& slot, float peak)
+  {
+    slot.store (peak * 0.35f + slot.load() * 0.65f);
+  };
+
+  // Meter host signal before input trim so VU reflects what the DAW is actually sending.
   smoothPeak (mInputPeakL, channelPeak (0));
   smoothPeak (mInputPeakR, channelPeak (numChans > 1 ? 1 : 0));
+
+  // Global input trim — pull down hot interfaces before NAM
+  const float inG = juce::Decibels::decibelsToGain (mMasterInDb.load());
+  if (inG != 1.0f)
+    buffer.applyGain (inG);
+
+  const int inCh = juce::jlimit (0, numChans - 1, mInputChannel);
+  mMono.copyFrom (0, 0, buffer, inCh, 0, numSamples);
   smoothPeak (mInputPeak, channelPeak (inCh));
 
   struct StereoSig
@@ -602,42 +615,62 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
     if (node->type() == NodeType::Input)
     {
       int ch = 0;
-      if (! mDawHosted)
+      if (mDawHosted)
       {
-        if (auto* d = findDesc())
-          ch = d->params.inputChannel;
-        ch = juce::jlimit (0, numChans - 1, ch);
-
-        // Standalone only: if the picked device channel is empty but another isn't,
-        // use the loudest (avoids silent NAM from a wrong interface channel).
-        if (numChans > 1)
+        // DAW owns routing. Mix every host input channel to mono so mono-on-L,
+        // mono-on-R, or odd pin maps still feed the amp (Reaper pin connector).
+        mInputChannel = 0;
+        if (numChans <= 1)
         {
-          auto blockPeak = [&] (int c) -> float
-          {
-            float peak = 0.0f;
-            const float* p = buffer.getReadPointer (c);
-            for (int i = 0; i < numSamples; ++i)
-              peak = juce::jmax (peak, std::abs (p[i]));
-            return peak;
-          };
-
-          const float selPeak = blockPeak (ch);
-          int bestCh = ch;
-          float bestPeak = selPeak;
-          for (int c = 0; c < numChans; ++c)
-          {
-            const float pk = blockPeak (c);
-            if (pk > bestPeak)
-            {
-              bestPeak = pk;
-              bestCh = c;
-            }
-          }
-          if (bestPeak > 1.0e-4f && selPeak < bestPeak * 0.05f)
-            ch = bestCh;
+          juce::FloatVectorOperations::copy (outSig.L.data(), buffer.getReadPointer (0), numSamples);
         }
+        else
+        {
+          const float scale = 1.0f / (float) numChans;
+          for (int i = 0; i < numSamples; ++i)
+          {
+            float sum = 0.0f;
+            for (int c = 0; c < numChans; ++c)
+              sum += buffer.getSample (c, i);
+            outSig.L[(size_t) i] = sum * scale;
+          }
+        }
+        juce::FloatVectorOperations::copy (outSig.R.data(), outSig.L.data(), numSamples);
+        continue;
       }
-      // DAW: always host buffer L (ch 0). Track/hardware routing is the host's job.
+
+      if (auto* d = findDesc())
+        ch = d->params.inputChannel;
+      ch = juce::jlimit (0, numChans - 1, ch);
+
+      // Standalone: if the picked device channel is empty but another isn't,
+      // use the loudest (avoids silent NAM from a wrong interface channel).
+      if (numChans > 1)
+      {
+        auto blockPeak = [&] (int c) -> float
+        {
+          float peak = 0.0f;
+          const float* p = buffer.getReadPointer (c);
+          for (int i = 0; i < numSamples; ++i)
+            peak = juce::jmax (peak, std::abs (p[i]));
+          return peak;
+        };
+
+        const float selPeak = blockPeak (ch);
+        int bestCh = ch;
+        float bestPeak = selPeak;
+        for (int c = 0; c < numChans; ++c)
+        {
+          const float pk = blockPeak (c);
+          if (pk > bestPeak)
+          {
+            bestPeak = pk;
+            bestCh = c;
+          }
+        }
+        if (bestPeak > 1.0e-4f && selPeak < bestPeak * 0.05f)
+          ch = bestCh;
+      }
 
       mInputChannel = ch;
       juce::FloatVectorOperations::copy (outSig.L.data(), buffer.getReadPointer (ch), numSamples);

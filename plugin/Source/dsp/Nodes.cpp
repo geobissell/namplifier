@@ -90,9 +90,20 @@ void NamRuntimeNode::processMono (float* buffer, int numSamples)
   if (bypass || mModel == nullptr)
     return;
 
+  if (numSamples > mMaxBlock)
+    prepare (mSampleRate, numSamples);
+
   mInPtr[0] = buffer;
   mOutPtr[0] = mScratch.data();
-  mModel->process (mInPtr, mOutPtr, numSamples);
+  try
+  {
+    mModel->process (mInPtr, mOutPtr, numSamples);
+  }
+  catch (...)
+  {
+    // Never let a NAM/resampler failure silence or corrupt the host callback.
+    return;
+  }
   juce::FloatVectorOperations::copy (buffer, mScratch.data(), numSamples);
 
   // Match official NAM plugin "Normalized" mode — without this, raw model

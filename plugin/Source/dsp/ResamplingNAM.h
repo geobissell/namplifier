@@ -65,7 +65,7 @@ public:
   void process (NAM_SAMPLE** input, NAM_SAMPLE** output, const int num_frames) override
   {
     if (num_frames > mMaxExternalBlockSize)
-      throw std::runtime_error ("NAM block larger than prepared max");
+      Reset (mExpectedSampleRate > 0.0 ? mExpectedSampleRate : 48000.0, num_frames);
 
     if (! needToResample())
     {

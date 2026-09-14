@@ -39,6 +39,7 @@ public:
   /** When true (VST/AU), ignore per-node device channel picks — the DAW owns routing. */
   void setDawHosted (bool dawHosted);
   bool isDawHosted() const { return mDawHosted; }
+  int getLatencySamples() const;
   int getNumInputChannels() const { return mHostIns; }
   int getNumOutputChannels() const { return mHostOuts; }
   juce::var getDspStatus() const;

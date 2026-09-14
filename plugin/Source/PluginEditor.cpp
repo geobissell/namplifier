@@ -115,7 +115,10 @@ NamplifierAudioProcessorEditor::NamplifierAudioProcessorEditor (NamplifierAudioP
 {
   {
     juce::PropertiesFile::Options opt;
-    opt.applicationName = "Namplifier";
+    // Keep plugin masters separate from standalone audio-device settings.
+    opt.applicationName = processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone
+                            ? "Namplifier"
+                            : "NamplifierPlugin";
     opt.filenameSuffix = ".settings";
     juce::PropertiesFile props (opt);
     if (props.containsKey ("masterInDb"))
@@ -460,7 +463,9 @@ juce::String NamplifierAudioProcessorEditor::handleNativeCall (const juce::Strin
         processor.getGraphEngine().setMasterOutDb ((float) o->getProperty ("db"));
       {
         juce::PropertiesFile::Options opt;
-        opt.applicationName = "Namplifier";
+        opt.applicationName = processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone
+                                ? "Namplifier"
+                                : "NamplifierPlugin";
         opt.filenameSuffix = ".settings";
         juce::PropertiesFile props (opt);
         props.setValue ("masterInDb", processor.getGraphEngine().getMasterInDb());
