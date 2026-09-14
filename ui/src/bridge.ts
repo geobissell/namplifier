@@ -216,7 +216,7 @@ function demoLibrary(): LibraryItem[] {
     { id: "fx3", kind: "fx", name: "Chorus (soon)", source: "factory", notes: "Coming later" },
     { id: "r1", kind: "routing", name: "Input", format: "input", source: "factory", notes: "Audio input" },
     { id: "rm", kind: "routing", name: "Media File", format: "media", source: "factory", notes: "Local audio player" },
-    { id: "ry", kind: "routing", name: "YouTube", format: "youtube", source: "factory", notes: "YouTube audio (yt-dlp)" },
+    { id: "ry", kind: "routing", name: "YouTube", format: "youtube", source: "factory", notes: "Play YouTube audio into the graph" },
     { id: "r2", kind: "routing", name: "Split", format: "split", source: "factory", notes: "Fan-out" },
     { id: "r3", kind: "routing", name: "Merge", format: "merge", source: "factory", notes: "Blend paths" },
     { id: "r4", kind: "routing", name: "Output", format: "output", source: "factory", notes: "Stereo out" },

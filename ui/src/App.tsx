@@ -1728,17 +1728,6 @@ export default function App() {
                             ))}
                           </div>
                         )}
-                        <p className="hint">
-                          Audio only — requires{" "}
-                          <button
-                            type="button"
-                            className="linkish"
-                            onClick={() => void native.openExternal("https://github.com/yt-dlp/yt-dlp")}
-                          >
-                            yt-dlp
-                          </button>{" "}
-                          (and usually ffmpeg) on PATH.
-                        </p>
                       </>
                     )}
 

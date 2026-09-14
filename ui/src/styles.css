@@ -1018,15 +1018,6 @@ input {
 .yt-hit:hover {
   border-color: color-mix(in srgb, var(--accent) 50%, transparent);
 }
-button.linkish {
-  background: none;
-  border: none;
-  color: var(--accent);
-  padding: 0;
-  cursor: pointer;
-  text-decoration: underline;
-  font: inherit;
-}
 
 .port {
   position: absolute;

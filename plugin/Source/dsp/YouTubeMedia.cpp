@@ -216,8 +216,7 @@ juce::Result youtubeSearch (const juce::String& query, int maxResults, juce::Arr
   resultsOut.clear();
   const auto exe = findYtDlpExecutable();
   if (! exe.existsAsFile())
-    return juce::Result::fail (
-      "yt-dlp not found. Install it (https://github.com/yt-dlp/yt-dlp) and ensure it is on PATH.");
+    return juce::Result::fail ("YouTube search isn’t available on this machine.");
 
   const int n = juce::jlimit (1, 20, maxResults);
   const juce::String searchSpec = "ytsearch" + juce::String (n) + ":" + query.trim();
@@ -230,7 +229,7 @@ juce::Result youtubeSearch (const juce::String& query, int maxResults, juce::Arr
 
   juce::String out, err;
   if (! runProcess (exe.getFullPathName(), args, out, err, 60000))
-    return juce::Result::fail ("YouTube search failed. " + (err.isNotEmpty() ? err : out).trim().substring (0, 240));
+    return juce::Result::fail ("YouTube search failed.");
 
   auto lines = juce::StringArray::fromLines (out);
   for (auto& line : lines)
@@ -257,7 +256,7 @@ juce::Result youtubeSearch (const juce::String& query, int maxResults, juce::Arr
   }
 
   if (resultsOut.isEmpty())
-    return juce::Result::fail ("No YouTube results. Check the query or yt-dlp install.");
+    return juce::Result::fail ("No YouTube results for that search.");
 
   juce::ignoreUnused (quoteArg);
   return juce::Result::ok();
@@ -270,10 +269,7 @@ juce::Result youtubeDownloadAudio (const juce::String& videoIdOrUrl,
 {
   const auto exe = findYtDlpExecutable();
   if (! exe.existsAsFile())
-    return juce::Result::fail (
-      "yt-dlp not found. Install it (https://github.com/yt-dlp/yt-dlp) and ensure it is on PATH.");
-
-  cacheDir.createDirectory();
+    return juce::Result::fail ("YouTube playback isn’t available on this machine.");
 
   juce::String id = videoIdOrUrl.trim();
   juce::String url = id;
@@ -325,7 +321,7 @@ juce::Result youtubeDownloadAudio (const juce::String& videoIdOrUrl,
 
   juce::String out, err;
   if (! runProcess (exe.getFullPathName(), args, out, err, 300000))
-    return juce::Result::fail ("YouTube download failed. " + (err.isNotEmpty() ? err : out).trim().substring (0, 280));
+    return juce::Result::fail ("Couldn’t download that video’s audio.");
 
   titleOut = out.trim().upToFirstOccurrenceOf ("\n", false, false).trim();
   if (! wavOut.existsAsFile())
@@ -343,7 +339,7 @@ juce::Result youtubeDownloadAudio (const juce::String& videoIdOrUrl,
   }
 
   if (! wavOut.existsAsFile())
-    return juce::Result::fail ("Download finished but WAV was not found in cache.");
+    return juce::Result::fail ("Couldn’t prepare the audio file.");
 
   return juce::Result::ok();
 }
