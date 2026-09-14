@@ -2,8 +2,10 @@
 #include "NamplifierUiData.h"
 #include "dsp/CabDetect.h"
 #include "dsp/YouTubeMedia.h"
+#include "host/HostedVstNode.h"
 #include <juce_cryptography/juce_cryptography.h>
 #include <cstdint>
+#include <map>
 
 namespace
 {
@@ -18,6 +20,28 @@ juce::String mimeFor (const juce::String& path)
   if (ext == "json") return "application/json";
   if (ext == "woff2") return "font/woff2";
   return "application/octet-stream";
+}
+
+class PluginEditorWindow : public juce::DocumentWindow
+{
+public:
+  PluginEditorWindow (const juce::String& name, juce::AudioProcessorEditor* ed)
+    : DocumentWindow (name, juce::Colours::darkgrey, DocumentWindow::closeButton)
+  {
+    setUsingNativeTitleBar (true);
+    setResizable (true, false);
+    setContentOwned (ed, true);
+    centreWithSize (juce::jmax (400, ed->getWidth()), juce::jmax (300, ed->getHeight()));
+    setVisible (true);
+  }
+
+  void closeButtonPressed() override { setVisible (false); }
+};
+
+std::map<juce::String, std::unique_ptr<PluginEditorWindow>>& pluginWindows()
+{
+  static std::map<juce::String, std::unique_ptr<PluginEditorWindow>> windows;
+  return windows;
 }
 
 std::optional<juce::WebBrowserComponent::Resource> resourceFromBinaryData (const juce::String& path)
@@ -161,6 +185,7 @@ NamplifierAudioProcessorEditor::~NamplifierAudioProcessorEditor()
   oauthLoopback.stop();
   processor.getGraphEngine().onAsyncLoadFinished = nullptr;
   processor.onGraphChanged = nullptr;
+  pluginWindows().clear();
   web.reset();
 }
 
@@ -297,6 +322,14 @@ juce::WebBrowserComponent::Options NamplifierAudioProcessorEditor::makeOptions()
     .withNativeFunction ("libraryAddToGraph", bind ("libraryAddToGraph"))
     .withNativeFunction ("youtubeSearch", bind ("youtubeSearch"))
     .withNativeFunction ("youtubeLoadOntoNode", bind ("youtubeLoadOntoNode"))
+    .withNativeFunction ("getPluginFolders", bind ("getPluginFolders"))
+    .withNativeFunction ("addPluginFolder", bind ("addPluginFolder"))
+    .withNativeFunction ("removePluginFolder", bind ("removePluginFolder"))
+    .withNativeFunction ("scanPlugins", bind ("scanPlugins"))
+    .withNativeFunction ("getPluginScanStatus", bind ("getPluginScanStatus"))
+    .withNativeFunction ("getPluginCatalog", bind ("getPluginCatalog"))
+    .withNativeFunction ("loadPluginOntoNode", bind ("loadPluginOntoNode"))
+    .withNativeFunction ("openPluginEditor", bind ("openPluginEditor"))
     .withNativeFunction ("openExternal", bind ("openExternal"))
     .withNativeFunction ("getMaster", bind ("getMaster"))
     .withNativeFunction ("setMaster", bind ("setMaster"));
@@ -379,6 +412,9 @@ juce::String NamplifierAudioProcessorEditor::handleNativeCall (const juce::Strin
         p.mediaLoop = params->hasProperty ("mediaLoop") && (bool) params->getProperty ("mediaLoop");
         p.mediaSeekSec = params->hasProperty ("mediaSeekSec") ? (float) params->getProperty ("mediaSeekSec") : -1.0f;
         p.mediaUrl = params->getProperty ("mediaUrl").toString();
+        p.vstIns = params->hasProperty ("vstIns") ? (int) params->getProperty ("vstIns") : 2;
+        p.vstOuts = params->hasProperty ("vstOuts") ? (int) params->getProperty ("vstOuts") : 2;
+        p.pluginState = params->getProperty ("pluginState").toString();
       }
       processor.getGraphEngine().updateNodeParams (id, p);
       return ok();
@@ -1063,6 +1099,11 @@ juce::String NamplifierAudioProcessorEditor::handleNativeCall (const juce::Strin
           break;
         }
       if (! okFind) return fail ("Library item not found");
+      if (found.kind == namplifier::LibraryItemKind::Vst)
+        return fail ("Drop VSTs onto the graph to add a new node — swapping plugins on an existing VST node isn’t supported");
+      if (found.kind == namplifier::LibraryItemKind::Media
+          || found.kind == namplifier::LibraryItemKind::Routing)
+        return fail ("Drop that block onto the graph");
       if (found.kind == namplifier::LibraryItemKind::Fx)
       {
         // Allow applying reverb onto an empty fx node later; for now reject apply-to-selection for FX
@@ -1271,18 +1312,31 @@ juce::String NamplifierAudioProcessorEditor::handleNativeCall (const juce::Strin
           node.params.displayName = "Merge";
           node.params.mix = 0.5f;
         }
-        else if (fmt == "media" || fmt == "media_file")
-        {
-          node.type = namplifier::NodeType::MediaFile;
-          node.params.displayName = "Media File";
-        }
-        else if (fmt == "youtube" || fmt == "yt")
-        {
-          node.type = namplifier::NodeType::YouTube;
-          node.params.displayName = "YouTube";
-        }
         else
           return fail ("Unknown routing block");
+      }
+      else if (found.kind == namplifier::LibraryItemKind::Media)
+      {
+        const auto fmt = found.format.toLowerCase();
+        if (fmt == "youtube" || fmt == "yt")
+        {
+          node.type = namplifier::NodeType::YouTube;
+          node.params.displayName = found.name.isNotEmpty() ? found.name : "YouTube";
+        }
+        else
+        {
+          node.type = namplifier::NodeType::MediaFile;
+          node.params.displayName = found.name.isNotEmpty() ? found.name : "Media File";
+        }
+      }
+      else if (found.kind == namplifier::LibraryItemKind::Vst)
+      {
+        node.type = namplifier::NodeType::Vst;
+        node.params.displayName = found.name;
+        node.params.filePath = found.filePath;
+        node.params.modelId = found.modelId;
+        node.params.vstIns = 2;
+        node.params.vstOuts = 2;
       }
       else if (found.kind == namplifier::LibraryItemKind::Ir)
       {
@@ -1300,7 +1354,110 @@ juce::String NamplifierAudioProcessorEditor::handleNativeCall (const juce::Strin
       if ((node.type == namplifier::NodeType::Nam || node.type == namplifier::NodeType::Ir)
           && juce::File (found.filePath).existsAsFile())
         processor.getGraphEngine().loadFileOntoNode (node.id, juce::File (found.filePath));
+      // VST load is queued inside setGraph/rebuild (async) to avoid message-thread deadlocks.
       return ok (processor.getGraphEngine().getGraph().toVar());
+    }
+
+    if (method == "getPluginFolders")
+    {
+      juce::Array<juce::var> arr;
+      for (auto& f : processor.getPluginCatalog().getFolders())
+        arr.add (f);
+      return ok (juce::var (arr));
+    }
+
+    if (method == "addPluginFolder")
+    {
+      auto chooser = std::make_shared<juce::FileChooser> ("Add VST3 folder", juce::File(), "*");
+      chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                            [this, chooser] (const juce::FileChooser& fc)
+                            {
+                              auto f = fc.getResult();
+                              if (f.isDirectory())
+                                processor.getPluginCatalog().addFolder (f);
+                              if (web != nullptr)
+                                web->emitEventIfBrowserIsVisible ("pluginCatalogChanged", juce::var());
+                            });
+      return ok();
+    }
+
+    if (method == "removePluginFolder")
+    {
+      auto* o = args.getDynamicObject();
+      if (o == nullptr) return fail ("bad args");
+      processor.getPluginCatalog().removeFolder (o->getProperty ("path").toString());
+      return ok();
+    }
+
+    if (method == "scanPlugins")
+    {
+      if (processor.getPluginCatalog().isScanning())
+        return ok();
+      juce::Thread::launch ([this]
+      {
+        processor.getPluginCatalog().scanFolders();
+        juce::MessageManager::callAsync ([this]
+        {
+          processor.syncVstLibraryFromCatalog();
+          if (web != nullptr)
+          {
+            web->emitEventIfBrowserIsVisible ("pluginCatalogChanged", juce::var());
+            web->emitEventIfBrowserIsVisible ("libraryChanged", juce::var());
+          }
+        });
+      });
+      return ok();
+    }
+
+    if (method == "getPluginScanStatus")
+    {
+      auto* o = new juce::DynamicObject();
+      o->setProperty ("scanning", processor.getPluginCatalog().isScanning());
+      o->setProperty ("status", processor.getPluginCatalog().getScanStatus());
+      o->setProperty ("count", processor.getPluginCatalog().getPluginCount());
+      return ok (juce::var (o));
+    }
+
+    if (method == "getPluginCatalog")
+    {
+      auto* o = args.getDynamicObject();
+      const auto query = o != nullptr ? o->getProperty ("query").toString() : juce::String();
+      return ok (processor.getPluginCatalog().getPluginsVar (query));
+    }
+
+    if (method == "loadPluginOntoNode")
+    {
+      auto* o = args.getDynamicObject();
+      if (o == nullptr) return fail ("bad args");
+      const auto id = o->getProperty ("id").toString();
+      const auto uid = o->getProperty ("uid").toString();
+      // Swapping plugins on an existing node is disabled (crash risk) — only used for recovery.
+      processor.getGraphEngine().loadVstOntoNode (id, uid);
+      if (web != nullptr)
+        web->emitEventIfBrowserIsVisible ("graphChanged", juce::var());
+      return ok (processor.getGraphEngine().getGraph().toVar());
+    }
+
+    if (method == "openPluginEditor")
+    {
+      auto* o = args.getDynamicObject();
+      if (o == nullptr) return fail ("bad args");
+      const auto id = o->getProperty ("id").toString();
+      auto* vst = processor.getGraphEngine().getVstNode (id);
+      if (vst == nullptr || ! vst->hasPlugin() || vst->getPlugin() == nullptr)
+        return fail ("Load a plugin on this node first");
+
+      auto* instance = vst->getPlugin();
+      if (! instance->hasEditor())
+        return fail ("This plugin has no editor");
+
+      auto* ed = instance->createEditor();
+      if (ed == nullptr)
+        return fail ("Could not open plugin editor");
+
+      const auto title = vst->displayName.isNotEmpty() ? vst->displayName : instance->getName();
+      pluginWindows()[id] = std::make_unique<PluginEditorWindow> (title, ed);
+      return ok();
     }
 
     if (method == "openExternal")

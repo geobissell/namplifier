@@ -8,7 +8,8 @@ export type NodeType =
   | "bypass"
   | "fx"
   | "media"
-  | "youtube";
+  | "youtube"
+  | "vst";
 
 export interface NodeParams {
   levelDb: number;
@@ -49,6 +50,9 @@ export interface NodeParams {
   mediaLoop?: boolean;
   mediaSeekSec?: number;
   mediaUrl?: string;
+  vstIns?: number;
+  vstOuts?: number;
+  pluginState?: string;
 }
 
 export interface GraphNode {
@@ -76,7 +80,7 @@ export interface GraphDocument {
 
 export interface LibraryItem {
   id: string;
-  kind: "nam" | "ir" | "fx" | "routing" | "folder";
+  kind: "nam" | "ir" | "fx" | "routing" | "media" | "vst" | "folder";
   name: string;
   filePath?: string;
   toneId?: string;
@@ -215,8 +219,8 @@ function demoLibrary(): LibraryItem[] {
     { id: "fxg", kind: "fx", name: "Noise Gate", format: "gate", source: "factory", notes: "Before amp" },
     { id: "fx3", kind: "fx", name: "Chorus (soon)", source: "factory", notes: "Coming later" },
     { id: "r1", kind: "routing", name: "Input", format: "input", source: "factory", notes: "Audio input" },
-    { id: "rm", kind: "routing", name: "Media File", format: "media", source: "factory", notes: "Local audio player" },
-    { id: "ry", kind: "routing", name: "YouTube", format: "youtube", source: "factory", notes: "Play YouTube audio into the graph" },
+    { id: "rm", kind: "media", name: "Media File", format: "media", source: "factory", notes: "Local audio player" },
+    { id: "ry", kind: "media", name: "YouTube", format: "youtube", source: "factory", notes: "Play YouTube audio into the graph" },
     { id: "r2", kind: "routing", name: "Split", format: "split", source: "factory", notes: "Fan-out" },
     { id: "r3", kind: "routing", name: "Merge", format: "merge", source: "factory", notes: "Blend paths" },
     { id: "r4", kind: "routing", name: "Output", format: "output", source: "factory", notes: "Stereo out" },
@@ -281,6 +285,9 @@ export function emptyParams(): NodeParams {
     mediaLoop: false,
     mediaSeekSec: -1,
     mediaUrl: "",
+    vstIns: 2,
+    vstOuts: 2,
+    pluginState: "",
   };
 }
 
@@ -292,6 +299,14 @@ export const native = {
   youtubeSearch: (query: string, maxResults = 8) => call("youtubeSearch", { query, maxResults }),
   youtubeLoadOntoNode: (id: string, videoId: string, title?: string, url?: string) =>
     call("youtubeLoadOntoNode", { id, videoId, title: title ?? "", url: url ?? "" }),
+  getPluginFolders: () => call("getPluginFolders"),
+  addPluginFolder: () => call("addPluginFolder"),
+  removePluginFolder: (path: string) => call("removePluginFolder", { path }),
+  scanPlugins: () => call("scanPlugins"),
+  getPluginScanStatus: () => call("getPluginScanStatus"),
+  getPluginCatalog: (query?: string) => call("getPluginCatalog", { query: query ?? "" }),
+  loadPluginOntoNode: (id: string, uid: string) => call("loadPluginOntoNode", { id, uid }),
+  openPluginEditor: (id: string) => call("openPluginEditor", { id }),
   getCpu: () => call("getCpu"),
   getIoInfo: () => call("getIoInfo"),
   getDspStatus: () => call("getDspStatus"),

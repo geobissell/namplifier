@@ -17,7 +17,8 @@ enum class NodeType
   Bypass,
   Fx,
   MediaFile,
-  YouTube
+  YouTube,
+  Vst
 };
 
 struct NodeParams
@@ -79,6 +80,11 @@ struct NodeParams
   bool mediaLoop = false;
   float mediaSeekSec = -1.0f; // >= 0 requests a seek; runtime clears after apply
   juce::String mediaUrl;      // YouTube watch URL or video id
+
+  // Hosted VST3
+  int vstIns = 2;  // graph in-ports 1–2
+  int vstOuts = 2; // graph out-ports 1–2
+  juce::String pluginState; // base64 AudioProcessor state
 };
 
 struct GraphNode

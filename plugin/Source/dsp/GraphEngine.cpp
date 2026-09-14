@@ -1,6 +1,7 @@
 #include "GraphEngine.h"
 #include "CabDetect.h"
 #include "YouTubeMedia.h"
+#include "host/PluginCatalog.h"
 #include <chrono>
 #include <cmath>
 #include <set>
@@ -523,6 +524,147 @@ void GraphEngine::loadYouTubeOntoNode (const juce::String& nodeId, const juce::S
   juce::ignoreUnused (raw);
 }
 
+void GraphEngine::loadVstOntoNode (const juce::String& nodeId, const juce::String& pluginUid)
+{
+  if (mCatalog == nullptr || pluginUid.isEmpty())
+    return;
+
+  juce::String path, stateB64;
+  {
+    std::lock_guard lock (mGraphMutex);
+    for (auto& n : mDocument.nodes)
+    {
+      if (n.id == nodeId && n.type == NodeType::Vst)
+      {
+        path = n.params.filePath;
+        stateB64 = n.params.pluginState;
+        if (auto it = mNodes.find (nodeId); it != mNodes.end())
+          if (auto* vst = dynamic_cast<VstRuntimeNode*> (it->second.get()))
+            vst->lastError = "Loading…";
+        break;
+      }
+    }
+  }
+
+  auto desc = mCatalog->findByUid (pluginUid);
+  if (desc.name.isEmpty())
+    desc = mCatalog->findByFileAndUid (path, pluginUid);
+  if (desc.name.isEmpty())
+  {
+    std::lock_guard lock (mGraphMutex);
+    if (auto it = mNodes.find (nodeId); it != mNodes.end())
+      if (auto* vst = dynamic_cast<VstRuntimeNode*> (it->second.get()))
+        vst->lastError = "Plugin not found — scan your VST folders first";
+    return;
+  }
+
+  const double sr = mSampleRate > 0.0 ? mSampleRate : 44100.0;
+  const int mb = mMaxBlock > 0 ? mMaxBlock : 512;
+  const auto descCopy = desc;
+  const auto stateCopy = stateB64;
+
+  mCatalog->createInstanceAsync (descCopy, sr, mb,
+    [this, nodeId, descCopy, stateCopy] (std::unique_ptr<juce::AudioPluginInstance> instance,
+                                         const juce::String& error)
+    {
+      finishVstLoad (nodeId, std::move (instance), descCopy, error, stateCopy);
+    });
+}
+
+void GraphEngine::finishVstLoad (const juce::String& nodeId,
+                                 std::unique_ptr<juce::AudioPluginInstance> instance,
+                                 const juce::PluginDescription& desc,
+                                 const juce::String& error,
+                                 const juce::String& stateB64)
+{
+  if (instance == nullptr)
+  {
+    std::lock_guard lock (mGraphMutex);
+    if (auto it = mNodes.find (nodeId); it != mNodes.end())
+      if (auto* vst = dynamic_cast<VstRuntimeNode*> (it->second.get()))
+        vst->lastError = error.isNotEmpty() ? error : "Could not load plugin";
+    if (onAsyncLoadFinished)
+      onAsyncLoadFinished();
+    return;
+  }
+
+  if (stateB64.isNotEmpty())
+  {
+    juce::MemoryOutputStream mos;
+    if (juce::Base64::convertFromBase64 (mos, stateB64))
+      instance->setStateInformation (mos.getData(), (int) mos.getDataSize());
+  }
+
+  int ins = 2, outs = 2;
+  vstChannelCountsFromPlugin (*instance, ins, outs);
+
+  {
+    std::lock_guard lock (mGraphMutex);
+    auto it = mNodes.find (nodeId);
+    if (it == mNodes.end())
+      return;
+    auto* vst = dynamic_cast<VstRuntimeNode*> (it->second.get());
+    if (vst == nullptr)
+      return;
+
+    vst->lastError.clear();
+    vst->stageInstance (std::move (instance), ins, outs);
+    vst->filePath = desc.fileOrIdentifier;
+    vst->pluginUid = desc.createIdentifierString();
+    vst->displayName = desc.name;
+
+    for (auto& n : mDocument.nodes)
+    {
+      if (n.id == nodeId)
+      {
+        n.params.filePath = desc.fileOrIdentifier;
+        n.params.modelId = desc.createIdentifierString();
+        n.params.displayName = desc.name;
+        n.params.vstIns = ins;
+        n.params.vstOuts = outs;
+        break;
+      }
+    }
+  }
+
+  if (onAsyncLoadFinished)
+    onAsyncLoadFinished();
+}
+
+void GraphEngine::capturePluginStates()
+{
+  std::lock_guard lock (mGraphMutex);
+  for (auto& n : mDocument.nodes)
+  {
+    if (n.type != NodeType::Vst)
+      continue;
+    if (auto it = mNodes.find (n.id); it != mNodes.end())
+      if (auto* vst = dynamic_cast<VstRuntimeNode*> (it->second.get()))
+        if (vst->hasPlugin())
+          n.params.pluginState = vst->captureStateBase64();
+  }
+}
+
+VstRuntimeNode* GraphEngine::getVstNode (const juce::String& nodeId)
+{
+  std::lock_guard lock (mGraphMutex);
+  if (auto it = mNodes.find (nodeId); it != mNodes.end())
+    return dynamic_cast<VstRuntimeNode*> (it->second.get());
+  return nullptr;
+}
+
+void GraphEngine::scheduleVstReloadLocked (const juce::String& nodeId, const juce::String& pluginUid)
+{
+  // Intentionally does NOT take mGraphMutex — rebuildLocked already holds it.
+  if (pluginUid.isEmpty())
+    return;
+
+  juce::MessageManager::callAsync ([this, nodeId, pluginUid]
+  {
+    loadVstOntoNode (nodeId, pluginUid);
+  });
+}
+
 juce::var GraphEngine::getDspStatus() const
 {
   std::lock_guard lock (mGraphMutex);
@@ -557,6 +699,11 @@ juce::var GraphEngine::getDspStatus() const
         pos = media->positionSec();
         dur = media->durationSec();
         playing = media->isPlaying();
+      }
+      else if (auto* vst = dynamic_cast<VstRuntimeNode*> (it->second.get()))
+      {
+        loaded = vst->hasPlugin();
+        err = vst->lastError;
       }
     }
     o->setProperty ("loaded", loaded);
@@ -618,9 +765,11 @@ void GraphEngine::rebuildLocked()
       auto* ir = dynamic_cast<IrRuntimeNode*> (it->second.get());
       auto* nam = dynamic_cast<NamRuntimeNode*> (it->second.get());
       auto* media = dynamic_cast<MediaPlayerRuntimeNode*> (it->second.get());
+      auto* vst = dynamic_cast<VstRuntimeNode*> (it->second.get());
       const juce::String prevIr = ir != nullptr ? ir->filePath : juce::String();
       const juce::String prevNam = nam != nullptr ? nam->filePath : juce::String();
       const juce::String prevMedia = media != nullptr ? media->filePath : juce::String();
+      const juce::String prevVst = vst != nullptr ? vst->pluginUid : juce::String();
       it->second->setParams (desc.params);
       next[desc.id] = std::move (it->second);
       // setParams does not load files — reload when path appears/changes (same as IR).
@@ -633,6 +782,10 @@ void GraphEngine::rebuildLocked()
       if (media != nullptr && desc.params.filePath.isNotEmpty()
           && (desc.params.filePath != prevMedia || ! media->hasAudio()))
         loadMediaAsync (media, juce::File (desc.params.filePath));
+      if (vst != nullptr
+          && (desc.params.modelId.isNotEmpty() || desc.params.filePath.isNotEmpty())
+          && (desc.params.modelId != prevVst || ! vst->hasPlugin()))
+        scheduleVstReloadLocked (desc.id, desc.params.modelId);
     }
     else
     {
@@ -655,6 +808,9 @@ void GraphEngine::rebuildLocked()
         loadMediaAsync (media, juce::File (desc.params.filePath));
       }
       next[desc.id] = std::move (node);
+      if (desc.type == NodeType::Vst
+          && (desc.params.modelId.isNotEmpty() || desc.params.filePath.isNotEmpty()))
+        scheduleVstReloadLocked (desc.id, desc.params.modelId);
     }
   }
   mNodes = std::move (next);
@@ -765,7 +921,11 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
 
     auto isStereoFxNode = [] (const GraphNode* d) -> bool
     {
-      if (d == nullptr || d->type != NodeType::Fx)
+      if (d == nullptr)
+        return false;
+      if (d->type == NodeType::Vst)
+        return d->params.vstIns >= 2 || d->params.vstOuts >= 2;
+      if (d->type != NodeType::Fx)
         return false;
       return d->params.fxId.equalsIgnoreCase ("reverb")
              || d->params.fxId.equalsIgnoreCase ("delay")
@@ -782,6 +942,7 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
       if (d == nullptr) return 1;
       if (d->type == NodeType::Output) return 0;
       if (d->type == NodeType::Split) return 2;
+      if (d->type == NodeType::Vst) return juce::jlimit (1, 2, juce::jmax (1, d->params.vstOuts));
       if (isStereoFxNode (d)) return 2;
       return 1;
     };
@@ -793,6 +954,7 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
       if (d->type == NodeType::MediaFile || d->type == NodeType::YouTube) return 0;
       if (d->type == NodeType::Merge) return 2;
       if (d->type == NodeType::Output) return 1; // one stereo bus in
+      if (d->type == NodeType::Vst) return juce::jlimit (1, 2, juce::jmax (1, d->params.vstIns));
       if (isStereoFxNode (d)) return 2;
       return 1; // Split, NAM, IR, gate: single in
     };

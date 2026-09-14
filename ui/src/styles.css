@@ -325,6 +325,12 @@ input {
 .kind-routing .kind-tag {
   color: var(--split);
 }
+.kind-media .kind-tag {
+  color: #c45c26;
+}
+.kind-vst .kind-tag {
+  color: #8a6d3b;
+}
 
 .library,
 .tone-frame {
@@ -974,6 +980,15 @@ input {
 .node.media,
 .node.youtube {
   border-top: 3px solid #c45c26;
+}
+.node.vst {
+  border-top: 3px solid #8a6d3b;
+}
+
+.plugins-pop {
+  width: min(420px, 92vw);
+  max-height: min(70vh, 560px);
+  overflow: auto;
 }
 
 .media-search-row {

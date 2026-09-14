@@ -1,4 +1,5 @@
 #include "Nodes.h"
+#include "host/HostedVstNode.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -483,6 +484,9 @@ std::unique_ptr<RuntimeNode> createRuntimeNode (const GraphNode& desc)
     case NodeType::YouTube:
       node = std::make_unique<MediaPlayerRuntimeNode> (desc.type);
       break;
+    case NodeType::Vst:
+      node = std::make_unique<VstRuntimeNode>();
+      break;
     case NodeType::Fx:
       if (desc.params.fxId.equalsIgnoreCase ("delay")
           || desc.params.fxId.equalsIgnoreCase ("pingpong")
@@ -530,6 +534,12 @@ std::unique_ptr<RuntimeNode> createRuntimeNode (const GraphNode& desc)
     media->filePath = desc.params.filePath;
     media->displayName = desc.params.displayName;
     media->mediaUrl = desc.params.mediaUrl;
+  }
+  if (auto* vst = dynamic_cast<VstRuntimeNode*> (node.get()))
+  {
+    vst->filePath = desc.params.filePath;
+    vst->pluginUid = desc.params.modelId;
+    vst->displayName = desc.params.displayName;
   }
   return node;
 }

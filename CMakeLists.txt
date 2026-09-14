@@ -181,6 +181,10 @@ target_sources(Namplifier PRIVATE
   plugin/Source/presets/PresetManager.h
   plugin/Source/presets/LibraryManager.cpp
   plugin/Source/presets/LibraryManager.h
+  plugin/Source/host/PluginCatalog.cpp
+  plugin/Source/host/PluginCatalog.h
+  plugin/Source/host/HostedVstNode.cpp
+  plugin/Source/host/HostedVstNode.h
 )
 
 target_compile_definitions(Namplifier
@@ -189,6 +193,7 @@ target_compile_definitions(Namplifier
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_PLUGINHOST_VST3=1
     NAMPLIFIER_TONE3000_KEY="${Namplifier_TONE3000_KEY}"
 )
 if(DEFINED NAMPLIFIER_BUILD_ID AND NOT NAMPLIFIER_BUILD_ID STREQUAL "")

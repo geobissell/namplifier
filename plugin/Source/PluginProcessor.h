@@ -5,6 +5,7 @@
 #include "tone3000/Tone3000Client.h"
 #include "presets/PresetManager.h"
 #include "presets/LibraryManager.h"
+#include "host/PluginCatalog.h"
 
 class NamplifierAudioProcessor : public juce::AudioProcessor
 {
@@ -39,6 +40,8 @@ public:
   namplifier::Tone3000Client& getTone3000() { return tone3000; }
   namplifier::PresetManager& getPresets() { return presets; }
   namplifier::LibraryManager& getLibrary() { return library; }
+  namplifier::PluginCatalog& getPluginCatalog() { return pluginCatalog; }
+  void syncVstLibraryFromCatalog();
 
   std::function<void()> onGraphChanged;
 
@@ -47,6 +50,7 @@ private:
   namplifier::Tone3000Client tone3000;
   namplifier::PresetManager presets;
   namplifier::LibraryManager library;
+  namplifier::PluginCatalog pluginCatalog;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NamplifierAudioProcessor)
 };

@@ -12,6 +12,8 @@ juce::String libraryKindToString (LibraryItemKind k)
     case LibraryItemKind::Ir: return "ir";
     case LibraryItemKind::Fx: return "fx";
     case LibraryItemKind::Routing: return "routing";
+    case LibraryItemKind::Media: return "media";
+    case LibraryItemKind::Vst: return "vst";
     case LibraryItemKind::Folder: return "folder";
   }
   return "nam";
@@ -22,6 +24,8 @@ LibraryItemKind libraryKindFromString (const juce::String& s)
   if (s == "ir") return LibraryItemKind::Ir;
   if (s == "fx") return LibraryItemKind::Fx;
   if (s == "routing") return LibraryItemKind::Routing;
+  if (s == "media") return LibraryItemKind::Media;
+  if (s == "vst" || s == "vst3") return LibraryItemKind::Vst;
   if (s == "folder") return LibraryItemKind::Folder;
   return LibraryItemKind::NamProfile;
 }
@@ -315,8 +319,6 @@ void LibraryManager::ensureSeed()
     const char* notes;
   } routingSeed[] = {
     { "Input", "input", "Audio input — pick host channel in properties" },
-    { "Media File", "media", "Play a local audio file into the graph" },
-    { "YouTube", "youtube", "Play YouTube audio into the graph" },
     { "Split", "split", "One in → A/B outs for dual-amp / parallel paths" },
     { "Merge", "merge", "Blend two paths back together" },
     { "Output", "output", "Main stereo out (channels 1–2)" },
@@ -345,8 +347,85 @@ void LibraryManager::ensureSeed()
     dirty = true;
   }
 
+  // Migrate old routing entries for media / youtube / blank VST into Media kind or remove.
+  for (int i = mItems.size(); --i >= 0;)
+  {
+    auto& it = mItems.getReference (i);
+    if (it.kind != LibraryItemKind::Routing)
+      continue;
+    const auto fmt = it.format.toLowerCase();
+    if (fmt == "media" || fmt == "media_file" || fmt == "youtube" || fmt == "yt")
+    {
+      it.kind = LibraryItemKind::Media;
+      if (fmt == "media_file")
+        it.format = "media";
+      if (fmt == "yt")
+        it.format = "youtube";
+      dirty = true;
+    }
+    else if (fmt == "vst" || fmt == "vst3" || fmt == "plugin")
+    {
+      mItems.remove (i); // blank host node — VSTs come from scan
+      dirty = true;
+    }
+  }
+
+  const struct
+  {
+    const char* name;
+    const char* format;
+    const char* notes;
+  } mediaSeed[] = {
+    { "Media File", "media", "Play a local audio file into the graph" },
+    { "YouTube", "youtube", "Play YouTube audio into the graph" },
+  };
+
+  for (auto& seed : mediaSeed)
+  {
+    bool found = false;
+    for (auto& i : mItems)
+      if (i.kind == LibraryItemKind::Media && i.format.equalsIgnoreCase (seed.format))
+      {
+        found = true;
+        break;
+      }
+    if (found)
+      continue;
+    LibraryItem item;
+    item.id = juce::Uuid().toDashedString();
+    item.kind = LibraryItemKind::Media;
+    item.name = seed.name;
+    item.format = seed.format;
+    item.source = "factory";
+    item.notes = seed.notes;
+    mItems.add (item);
+    dirty = true;
+  }
+
   if (dirty)
     save();
+}
+
+void LibraryManager::syncScannedVsts (const juce::Array<LibraryItem>& scanned)
+{
+  for (int i = mItems.size(); --i >= 0;)
+  {
+    const auto& it = mItems.getReference (i);
+    if (it.kind == LibraryItemKind::Vst && it.source == "scan")
+      mItems.remove (i);
+  }
+
+  for (auto item : scanned)
+  {
+    item.kind = LibraryItemKind::Vst;
+    item.source = "scan";
+    if (item.id.isEmpty())
+      item.id = juce::Uuid().toDashedString();
+    if (item.format.isEmpty())
+      item.format = "vst3";
+    mItems.add (item);
+  }
+  save();
 }
 
 juce::Array<LibraryItem> LibraryManager::getItems() const

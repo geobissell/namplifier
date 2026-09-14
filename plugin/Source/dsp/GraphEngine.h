@@ -7,8 +7,11 @@
 
 #include "GraphModel.h"
 #include "Nodes.h"
+#include "host/HostedVstNode.h"
+
 namespace namplifier
 {
+class PluginCatalog;
 
 class GraphEngine
 {
@@ -27,6 +30,13 @@ public:
   void loadFileOntoNode (const juce::String& nodeId, const juce::File& file);
   void loadYouTubeOntoNode (const juce::String& nodeId, const juce::String& videoIdOrUrl,
                             const juce::String& title);
+
+  void setPluginCatalog (PluginCatalog* catalog) { mCatalog = catalog; }
+  /** Queue an async VST load (safe from the message thread; avoids MM deadlocks). */
+  void loadVstOntoNode (const juce::String& nodeId, const juce::String& pluginUid);
+  /** Pull hosted plugin state blobs into the graph document (before save). */
+  void capturePluginStates();
+  VstRuntimeNode* getVstNode (const juce::String& nodeId);
 
   float getCpuLoad() const { return mCpuLoad.load(); }
   float getInputPeak() const { return mInputPeak.load(); }
@@ -69,7 +79,16 @@ private:
   void loadNamAsync (NamRuntimeNode* node, juce::File file);
   void loadIrAsync (IrRuntimeNode* node, juce::File file);
   void loadMediaAsync (MediaPlayerRuntimeNode* node, juce::File file);
+  /** Call only while mGraphMutex is held (e.g. from rebuildLocked). Does not lock. */
+  void scheduleVstReloadLocked (const juce::String& nodeId, const juce::String& pluginUid);
+  void finishVstLoad (const juce::String& nodeId,
+                      std::unique_ptr<juce::AudioPluginInstance> instance,
+                      const juce::PluginDescription& desc,
+                      const juce::String& error,
+                      const juce::String& stateB64);
   std::vector<juce::String> topologicalOrder (const GraphDocument& doc) const;
+
+  PluginCatalog* mCatalog = nullptr;
 
   mutable std::mutex mGraphMutex;
   GraphDocument mDocument;

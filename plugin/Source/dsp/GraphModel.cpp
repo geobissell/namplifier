@@ -17,6 +17,7 @@ juce::String nodeTypeToString (NodeType t)
     case NodeType::Fx:        return "fx";
     case NodeType::MediaFile: return "media";
     case NodeType::YouTube:   return "youtube";
+    case NodeType::Vst:       return "vst";
   }
   return "bypass";
 }
@@ -32,6 +33,7 @@ NodeType nodeTypeFromString (const juce::String& s)
   if (s == "fx")     return NodeType::Fx;
   if (s == "media" || s == "media_file" || s == "mediafile") return NodeType::MediaFile;
   if (s == "youtube" || s == "yt") return NodeType::YouTube;
+  if (s == "vst" || s == "vst3" || s == "plugin") return NodeType::Vst;
   return NodeType::Bypass;
 }
 
@@ -76,6 +78,9 @@ static juce::var paramsToVar (const NodeParams& p)
   obj->setProperty ("mediaLoop", p.mediaLoop);
   obj->setProperty ("mediaSeekSec", p.mediaSeekSec);
   obj->setProperty ("mediaUrl", p.mediaUrl);
+  obj->setProperty ("vstIns", p.vstIns);
+  obj->setProperty ("vstOuts", p.vstOuts);
+  obj->setProperty ("pluginState", p.pluginState);
   return juce::var (obj);
 }
 
@@ -125,6 +130,9 @@ static NodeParams paramsFromVar (const juce::var& v)
     p.mediaLoop = o->hasProperty ("mediaLoop") && (bool) o->getProperty ("mediaLoop");
     p.mediaSeekSec = o->hasProperty ("mediaSeekSec") ? (float) o->getProperty ("mediaSeekSec") : -1.0f;
     p.mediaUrl = o->getProperty ("mediaUrl").toString();
+    p.vstIns = o->hasProperty ("vstIns") ? (int) o->getProperty ("vstIns") : 2;
+    p.vstOuts = o->hasProperty ("vstOuts") ? (int) o->getProperty ("vstOuts") : 2;
+    p.pluginState = o->getProperty ("pluginState").toString();
   }
   return p;
 }

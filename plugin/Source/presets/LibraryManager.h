@@ -11,6 +11,8 @@ enum class LibraryItemKind
   Ir,
   Fx, // reserved for future non-NAM effects
   Routing, // input / split / merge / output
+  Media,   // media file / youtube sources
+  Vst,     // scanned hosted VST3 plugins
   Folder
 };
 
@@ -46,6 +48,8 @@ public:
   bool renameItem (const juce::String& id, const juce::String& name, juce::String& errorOut);
   void reload();
   void ensureSeed();
+  /** Replace scanned VST library entries from the plugin catalog (source=scan). */
+  void syncScannedVsts (const juce::Array<LibraryItem>& scanned);
 
 private:
   void save();

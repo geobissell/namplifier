@@ -29,7 +29,7 @@ type ToneHit = {
   cabIncluded?: boolean;
   favorited?: boolean;
 };
-type LibFilter = "all" | "nam" | "ir" | "fx" | "routing";
+type LibFilter = "all" | "nam" | "ir" | "fx" | "media" | "vst" | "routing";
 
 function uid(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
@@ -43,12 +43,14 @@ function nodeLabel(n: GraphNode) {
   if (n.type === "merge") return "Merge";
   if (n.type === "media") return "Media File";
   if (n.type === "youtube") return "YouTube";
+  if (n.type === "vst") return "VST";
   return n.type.toUpperCase();
 }
 
 const NODE_W = 176;
 
 function isStereoFxNode(n: GraphNode) {
+  if (n.type === "vst") return (n.params.vstIns ?? 2) >= 2 || (n.params.vstOuts ?? 2) >= 2;
   if (n.type !== "fx") return false;
   const id = (n.params.fxId || "").toLowerCase();
   const name = (n.params.displayName || "").toLowerCase();
@@ -69,6 +71,7 @@ function numInPorts(n: GraphNode) {
   if (n.type === "merge") return 2;
   // Output / Host Output: one stereo bus in (wire once; L/R come from the source)
   if (n.type === "output") return 1;
+  if (n.type === "vst") return Math.min(2, Math.max(1, n.params.vstIns ?? 2));
   if (isStereoFxNode(n)) return 2;
   return 1; // split, nam, ir, gate, …
 }
@@ -76,6 +79,7 @@ function numInPorts(n: GraphNode) {
 function numOutPorts(n: GraphNode) {
   if (n.type === "output") return 0;
   if (n.type === "split") return 2; // A / B
+  if (n.type === "vst") return Math.min(2, Math.max(1, n.params.vstOuts ?? 2));
   if (isStereoFxNode(n)) return 2;
   return 1;
 }
@@ -87,8 +91,10 @@ function isHostOutput(n: GraphNode) {
 function portLabel(n: GraphNode, dir: "in" | "out", index: number) {
   if (n.type === "split" && dir === "out") return index === 0 ? "A" : "B";
   if (n.type === "merge" && dir === "in") return index === 0 ? "A" : "B";
-  if (isStereoFxNode(n) && dir === "in") return index === 0 ? "L" : "R";
-  if (isStereoFxNode(n) && dir === "out") return index === 0 ? "L" : "R";
+  if (n.type === "vst" || isStereoFxNode(n)) {
+    if (dir === "in" && numInPorts(n) > 1) return index === 0 ? "L" : "R";
+    if (dir === "out" && numOutPorts(n) > 1) return index === 0 ? "L" : "R";
+  }
   return "";
 }
 
@@ -184,6 +190,19 @@ function isReadyFx(item: { kind: string; format?: string; name: string }) {
 
 function isRoutingItem(item: { kind: string }) {
   return item.kind === "routing";
+}
+
+function isMediaItem(item: { kind: string }) {
+  return item.kind === "media";
+}
+
+function isVstItem(item: { kind: string }) {
+  return item.kind === "vst";
+}
+
+/** Library entries that always spawn a new graph node (never apply onto selection). */
+function isAddOnlyLibraryItem(item: { kind: string }) {
+  return isRoutingItem(item) || isMediaItem(item) || isVstItem(item) || item.kind === "fx";
 }
 
 function peakToDb(peak: number) {
@@ -357,6 +376,14 @@ export default function App() {
     { id: string; title: string; channel?: string; duration?: number; url?: string }[]
   >([]);
   const [ytBusy, setYtBusy] = useState<string | null>(null);
+  const [pluginsOpen, setPluginsOpen] = useState(false);
+  const [pluginFolders, setPluginFolders] = useState<string[]>([]);
+  const [pluginCatalog, setPluginCatalog] = useState<
+    { uid: string; name: string; manufacturer?: string; path?: string; numInputs?: number; numOutputs?: number }[]
+  >([]);
+  const [pluginQuery, setPluginQuery] = useState("");
+  const [pluginScanStatus, setPluginScanStatus] = useState("");
+  const [pluginScanning, setPluginScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toneOpen, setToneOpen] = useState(false);
   const [presetsOpen, setPresetsOpen] = useState(false);
@@ -471,6 +498,29 @@ export default function App() {
     if (res.ok) setLibrary((res.data as LibraryItem[]) ?? []);
   }, []);
 
+  const refreshPlugins = useCallback(async () => {
+    const folders = await native.getPluginFolders();
+    if (folders.ok) setPluginFolders((folders.data as string[]) ?? []);
+    const cat = await native.getPluginCatalog(pluginQuery.trim());
+    if (cat.ok)
+      setPluginCatalog(
+        (cat.data as {
+          uid: string;
+          name: string;
+          manufacturer?: string;
+          path?: string;
+          numInputs?: number;
+          numOutputs?: number;
+        }[]) ?? []
+      );
+    const st = await native.getPluginScanStatus();
+    if (st.ok) {
+      const d = st.data as { scanning?: boolean; status?: string };
+      setPluginScanning(Boolean(d.scanning));
+      setPluginScanStatus(d.status ?? "");
+    }
+  }, [pluginQuery]);
+
   const applyGraph = useCallback((raw: GraphDocument) => {
     const normalized = normalizeGraphPorts(raw);
     graphRef.current = normalized;
@@ -507,6 +557,7 @@ export default function App() {
     void refresh();
     onNativeEvent("graphChanged", () => void refresh());
     onNativeEvent("libraryChanged", () => void refreshLibrary());
+    onNativeEvent("pluginCatalogChanged", () => void refreshPlugins());
     onNativeEvent("toneAuthFinished", () => {
       setLoginWaiting(false);
       void refresh();
@@ -519,6 +570,15 @@ export default function App() {
         const data = info.data as IoInfo;
         setIo(data);
         setClipping(Boolean(data.clipping));
+      }
+      if (pluginScanning) {
+        const st = await native.getPluginScanStatus();
+        if (st.ok) {
+          const d = st.data as { scanning?: boolean; status?: string; count?: number };
+          setPluginScanStatus(d.status ?? "");
+          setPluginScanning(Boolean(d.scanning));
+          if (!d.scanning) void refreshPlugins();
+        }
       }
       const st = await native.getDspStatus();
       if (st.ok) {
@@ -575,7 +635,11 @@ export default function App() {
       }
     }, 250);
     return () => window.clearInterval(t);
-  }, [refresh, refreshLibrary]);
+  }, [refresh, refreshLibrary, refreshPlugins, pluginScanning]);
+
+  useEffect(() => {
+    if (pluginsOpen) void refreshPlugins();
+  }, [pluginsOpen, refreshPlugins]);
 
   useEffect(() => {
     const move = (ev: PointerEvent) => {
@@ -1152,7 +1216,9 @@ export default function App() {
       return;
     }
     const anchor = canvasDropAnchor();
-    if (item.kind === "fx" || isRoutingItem(item)) {
+    // Media / VST / routing / FX always add a new node — never swap onto a selected VST (crashy).
+    if (isAddOnlyLibraryItem(item) || item.kind === "vst" || item.kind === "media") {
+      if (item.kind === "fx" && !isReadyFx(item)) return;
       const res = await native.libraryAddToGraph(item.id, anchor.x, anchor.y);
       if (!res.ok) setError(res.error ?? "add failed");
       else {
@@ -1262,6 +1328,12 @@ export default function App() {
           Presets
         </button>
         <button
+          className={`pill ${pluginsOpen ? "active" : ""}`}
+          onClick={() => setPluginsOpen((v) => !v)}
+        >
+          Plugins
+        </button>
+        <button
           className={`pill primary ${toneOpen ? "active" : ""}`}
           onClick={() => {
             setToneOpen((v) => {
@@ -1330,7 +1402,7 @@ export default function App() {
             placeholder="Filter library…"
           />
           <div className="chips">
-            {(["all", "nam", "ir", "fx", "routing"] as LibFilter[]).map((f) => (
+            {(["all", "nam", "ir", "fx", "media", "vst", "routing"] as LibFilter[]).map((f) => (
               <button key={f} className={libFilter === f ? "chip active" : "chip"} onClick={() => setLibFilter(f)}>
                 {f}
               </button>
@@ -1341,7 +1413,7 @@ export default function App() {
               <div
                 key={item.id}
                 className={`lib-item kind-${item.kind}`}
-                draggable={isReadyFx(item) || isRoutingItem(item) || item.kind !== "fx"}
+                draggable={isReadyFx(item) || isAddOnlyLibraryItem(item) || item.kind !== "fx"}
                 onDragStart={(e) => {
                   if (item.kind === "fx" && !isReadyFx(item)) {
                     e.preventDefault();
@@ -1479,17 +1551,19 @@ export default function App() {
                 </div>
                 <div className="name">{nodeLabel(n)}</div>
                 {n.params.cabIncluded && <div className="node-cab">cab included — no IR needed</div>}
-                {(n.type === "nam" || n.type === "ir" || n.type === "media" || n.type === "youtube") && (
+                {(n.type === "nam" || n.type === "ir" || n.type === "media" || n.type === "youtube" || n.type === "vst") && (
                   <div className="node-warn">
                     {dspStatus[n.id]?.error
                       ? "load failed"
                       : dspStatus[n.id]?.loaded
                         ? ""
-                        : n.params.filePath || dspStatus[n.id]?.filePath
+                        : n.params.filePath || n.params.modelId || dspStatus[n.id]?.filePath
                           ? "loading…"
                           : n.type === "media" || n.type === "youtube"
                             ? "no media"
-                            : "no model"}
+                            : n.type === "vst"
+                              ? "no plugin"
+                              : "no model"}
                   </div>
                 )}
                 {Array.from({ length: numInPorts(n) }, (_, i) => (
@@ -1821,6 +1895,59 @@ export default function App() {
                         onChange={(e) =>
                           void updateParams({ ...p, bypass: e.target.checked, mediaSeekSec: -1 })
                         }
+                      />
+                      Bypass
+                    </label>
+                  </div>
+                )}
+
+                {selected.type === "vst" && (
+                  <div className="inspector-grid">
+                    <div className="inspector-meta">
+                      {dspStatus[selected.id]?.error && (
+                        <p className="error">{dspStatus[selected.id].error}</p>
+                      )}
+                      {!dspStatus[selected.id]?.loaded && !!selected.params.modelId && !dspStatus[selected.id]?.error && (
+                        <p className="hint">Loading plugin…</p>
+                      )}
+                      {!dspStatus[selected.id]?.loaded && !selected.params.modelId && (
+                        <p className="hint">Add a plugin from the Library → VST list.</p>
+                      )}
+                      {dspStatus[selected.id]?.loaded && (
+                        <p className="hint">
+                          {(selected.params.vstIns ?? 2) >= 2 ? "Stereo" : "Mono"} in ·{" "}
+                          {(selected.params.vstOuts ?? 2) >= 2 ? "Stereo" : "Mono"} out
+                        </p>
+                      )}
+                    </div>
+                    <div className="media-transport-row">
+                      <button
+                        className="pill tiny"
+                        disabled={!dspStatus[selected.id]?.loaded}
+                        onClick={() => void native.openPluginEditor(selected.id).then((r) => {
+                          if (!r.ok) setError(r.error ?? "Could not open editor");
+                        })}
+                      >
+                        Open UI
+                      </button>
+                      <button className="pill tiny" onClick={() => setPluginsOpen(true)}>
+                        Scan folders
+                      </button>
+                    </div>
+                    <ParamNum
+                      label="Level"
+                      value={p.levelDb}
+                      min={-24}
+                      max={24}
+                      step={0.1}
+                      suffix="dB"
+                      onChange={(v) => void updateParams({ ...p, levelDb: v })}
+                    />
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={p.bypass}
+                        onChange={(e) => void updateParams({ ...p, bypass: e.target.checked })}
                       />
                       Bypass
                     </label>
@@ -2686,6 +2813,67 @@ export default function App() {
                 >
                   ×
                 </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {pluginsOpen && (
+        <div className="preset-pop plugins-pop">
+          <div className="panel-head">
+            <h2>Plugins</h2>
+            <button className="pill tiny" onClick={() => setPluginsOpen(false)}>
+              Close
+            </button>
+          </div>
+          <p className="hint">Add VST3 folders and scan. Plugins appear under Library → vst.</p>
+          <div className="media-transport-row">
+            <button className="pill tiny" onClick={() => void native.addPluginFolder()}>
+              Add folder
+            </button>
+            <button
+              className="pill tiny primary"
+              disabled={pluginScanning}
+              onClick={() => {
+                setPluginScanning(true);
+                setPluginScanStatus("Starting…");
+                void native.scanPlugins();
+              }}
+            >
+              {pluginScanning ? "Scanning…" : "Scan"}
+            </button>
+          </div>
+          {pluginScanStatus && <p className="hint">{pluginScanStatus}</p>}
+          <div className="tone-list">
+            {pluginFolders.map((path) => (
+              <div key={path} className="row">
+                <span className="hint" style={{ flex: 1, wordBreak: "break-all" }}>
+                  {path}
+                </span>
+                <button
+                  className="pill tiny danger"
+                  onClick={() => void native.removePluginFolder(path).then(refreshPlugins)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="field" style={{ marginTop: 10 }}>
+            <label>Catalog ({pluginCatalog.length})</label>
+            <input
+              value={pluginQuery}
+              onChange={(e) => setPluginQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void refreshPlugins()}
+              placeholder="Filter…"
+            />
+          </div>
+          <div className="yt-results" style={{ maxHeight: "14rem" }}>
+            {pluginCatalog.slice(0, 60).map((plug) => (
+              <div key={plug.uid} className="yt-hit" style={{ cursor: "default" }}>
+                <strong>{plug.name}</strong>
+                <small className="muted">{plug.manufacturer}</small>
               </div>
             ))}
           </div>

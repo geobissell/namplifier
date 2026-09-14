@@ -12,6 +12,27 @@ NamplifierAudioProcessor::NamplifierAudioProcessor()
             .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
   graphEngine.setPluginHosted (wrapperType != wrapperType_Standalone);
+  graphEngine.setPluginCatalog (&pluginCatalog);
+  syncVstLibraryFromCatalog();
+}
+
+void NamplifierAudioProcessor::syncVstLibraryFromCatalog()
+{
+  juce::Array<namplifier::LibraryItem> items;
+  for (auto& type : pluginCatalog.getList().getTypes())
+  {
+    namplifier::LibraryItem item;
+    item.id = juce::Uuid().toDashedString();
+    item.kind = namplifier::LibraryItemKind::Vst;
+    item.name = type.name;
+    item.filePath = type.fileOrIdentifier;
+    item.modelId = type.createIdentifierString();
+    item.format = type.pluginFormatName.isNotEmpty() ? type.pluginFormatName : "vst3";
+    item.source = "scan";
+    item.notes = type.manufacturerName;
+    items.add (item);
+  }
+  library.syncScannedVsts (items);
 }
 
 NamplifierAudioProcessor::~NamplifierAudioProcessor() = default;
@@ -67,6 +88,7 @@ juce::AudioProcessorEditor* NamplifierAudioProcessor::createEditor()
 
 void NamplifierAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
+  graphEngine.capturePluginStates();
   auto doc = graphEngine.getGraph();
   auto json = doc.toJson();
   destData.replaceAll (json.toRawUTF8(), (size_t) json.getNumBytesAsUTF8());
