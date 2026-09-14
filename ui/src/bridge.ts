@@ -87,6 +87,7 @@ export interface IoInfo {
   activeOutputChannel?: number;
   inputMuted?: boolean;
   isStandalone?: boolean;
+  buildId?: string;
   masterInDb?: number;
   masterOutDb?: number;
   masterDb?: number;

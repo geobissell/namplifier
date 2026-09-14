@@ -20,14 +20,7 @@ public:
   juce::AudioProcessorEditor* createEditor() override;
   bool hasEditor() const override { return true; }
 
-  const juce::String getName() const override
-  {
-   #ifdef NAMPLIFIER_BUILD_ID
-    return "Namplifier " NAMPLIFIER_BUILD_ID;
-   #else
-    return "Namplifier";
-   #endif
-  }
+  const juce::String getName() const override { return "Namplifier"; }
   bool acceptsMidi() const override { return false; }
   bool producesMidi() const override { return false; }
   bool isMidiEffect() const override { return false; }

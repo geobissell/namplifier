@@ -438,6 +438,9 @@ juce::String NamplifierAudioProcessorEditor::handleNativeCall (const juce::Strin
       }
       o->setProperty ("inputMuted", muted);
       o->setProperty ("isStandalone", standalone);
+     #ifdef NAMPLIFIER_BUILD_ID
+      o->setProperty ("buildId", NAMPLIFIER_BUILD_ID);
+     #endif
       return ok (juce::var (o));
     }
 

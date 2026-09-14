@@ -1211,7 +1211,10 @@ export default function App() {
         >
           Tone3000
         </button>
-        <div className="cpu">{(cpu * 100).toFixed(0)}% CPU</div>
+        <div className="cpu">
+          {(cpu * 100).toFixed(0)}% CPU
+          {io.buildId ? <span className="muted"> · {io.buildId}</span> : null}
+        </div>
         <div
           className={`auth-dot ${signedIn ? "on" : "off"}`}
           title={signedIn ? "Tone3000 signed in" : "Tone3000 signed out"}
