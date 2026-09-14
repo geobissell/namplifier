@@ -58,7 +58,27 @@ jobs:
           if (-not $env:Namplifier_TONE3000_KEY) {
             Write-Warning "Secret Namplifier_TONE3000_KEY is empty — Tone3000 login will not work in this build."
           }
-          cmake -B build -G "Visual Studio 17 2022" -A x64 `
+
+          # windows-latest now ships VS 2026; pick the generator that exists on the runner.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $gen = $null
+          if (Test-Path $vswhere) {
+            $line = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property catalog_productLineVersion
+            switch ("$line") {
+              "18" { $gen = "Visual Studio 18 2026" }
+              "17" { $gen = "Visual Studio 17 2022" }
+              "16" { $gen = "Visual Studio 16 2019" }
+            }
+          }
+          if (-not $gen) {
+            $help = & cmake --help
+            if ($help -match "Visual Studio 18 2026") { $gen = "Visual Studio 18 2026" }
+            elseif ($help -match "Visual Studio 17 2022") { $gen = "Visual Studio 17 2022" }
+            else { throw "No supported Visual Studio CMake generator found on this runner." }
+          }
+          Write-Host "Using CMake generator: $gen"
+
+          cmake -B build -G $gen -A x64 `
             -DNamplifier_TONE3000_KEY="$env:Namplifier_TONE3000_KEY"
 
       - name: Build Standalone + VST3
