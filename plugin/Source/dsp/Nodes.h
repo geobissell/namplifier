@@ -690,6 +690,53 @@ private:
   float mMakeupDb = 0.0f;
 };
 
+/** Audio-file / YouTube cache player — source node (writes into L/R, ignores graph inputs). */
+class MediaPlayerRuntimeNode : public RuntimeNode
+{
+public:
+  explicit MediaPlayerRuntimeNode (NodeType t) : mType (t) {}
+
+  void prepare (double sampleRate, int maxBlockSize) override;
+  void process (float* left, float* right, int numSamples) override;
+  void processMono (float* buffer, int numSamples) override;
+  void setParams (const NodeParams& p) override;
+  NodeType type() const override { return mType; }
+
+  void stageAudio (juce::AudioBuffer<float> buffer, juce::String path);
+  void applyStaging();
+  bool hasAudio() const { return mReady.load (std::memory_order_acquire) && mAudio.getNumSamples() > 0; }
+  void clearAudio();
+
+  double positionSec() const;
+  double durationSec() const;
+  bool isPlaying() const { return mPlaying.load (std::memory_order_relaxed); }
+
+  juce::String filePath;
+  juce::String displayName;
+  juce::String lastError;
+  juce::String mediaUrl;
+
+private:
+  NodeType mType;
+  double mSampleRate = 44100.0;
+  float mGain = 1.0f;
+
+  juce::AudioBuffer<float> mAudio;
+  juce::AudioBuffer<float> mStagedAudio;
+  juce::String mStagedPath;
+  std::atomic<bool> mHasStaging { false };
+  std::atomic<bool> mReady { false };
+
+  std::atomic<bool> mPlaying { false };
+  std::atomic<bool> mLoop { false };
+  std::atomic<double> mPositionSamples { 0.0 };
+  std::atomic<double> mSeekSamples { -1.0 };
+};
+
 std::unique_ptr<RuntimeNode> createRuntimeNode (const GraphNode& desc);
+
+/** Decode any JUCE-supported audio file into a stereo buffer at targetSampleRate. */
+bool loadAudioFileResampled (const juce::File& file, double targetSampleRate,
+                             juce::AudioBuffer<float>& outStereo, juce::String& errorOut);
 
 } // namespace namplifier

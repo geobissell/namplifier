@@ -13,8 +13,10 @@ juce::String nodeTypeToString (NodeType t)
     case NodeType::Ir:     return "ir";
     case NodeType::Split:  return "split";
     case NodeType::Merge:  return "merge";
-    case NodeType::Bypass: return "bypass";
-    case NodeType::Fx:     return "fx";
+    case NodeType::Bypass:    return "bypass";
+    case NodeType::Fx:        return "fx";
+    case NodeType::MediaFile: return "media";
+    case NodeType::YouTube:   return "youtube";
   }
   return "bypass";
 }
@@ -28,6 +30,8 @@ NodeType nodeTypeFromString (const juce::String& s)
   if (s == "split")  return NodeType::Split;
   if (s == "merge")  return NodeType::Merge;
   if (s == "fx")     return NodeType::Fx;
+  if (s == "media" || s == "media_file" || s == "mediafile") return NodeType::MediaFile;
+  if (s == "youtube" || s == "yt") return NodeType::YouTube;
   return NodeType::Bypass;
 }
 
@@ -68,6 +72,10 @@ static juce::var paramsToVar (const NodeParams& p)
   obj->setProperty ("depth", p.depth);
   obj->setProperty ("fxMode", p.fxMode);
   obj->setProperty ("fxId", p.fxId);
+  obj->setProperty ("mediaPlaying", p.mediaPlaying);
+  obj->setProperty ("mediaLoop", p.mediaLoop);
+  obj->setProperty ("mediaSeekSec", p.mediaSeekSec);
+  obj->setProperty ("mediaUrl", p.mediaUrl);
   return juce::var (obj);
 }
 
@@ -113,6 +121,10 @@ static NodeParams paramsFromVar (const juce::var& v)
     p.depth = o->hasProperty ("depth") ? (float) o->getProperty ("depth") : 0.35f;
     p.fxMode = o->getProperty ("fxMode").toString();
     p.fxId = o->getProperty ("fxId").toString();
+    p.mediaPlaying = o->hasProperty ("mediaPlaying") && (bool) o->getProperty ("mediaPlaying");
+    p.mediaLoop = o->hasProperty ("mediaLoop") && (bool) o->getProperty ("mediaLoop");
+    p.mediaSeekSec = o->hasProperty ("mediaSeekSec") ? (float) o->getProperty ("mediaSeekSec") : -1.0f;
+    p.mediaUrl = o->getProperty ("mediaUrl").toString();
   }
   return p;
 }

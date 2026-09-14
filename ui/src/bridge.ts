@@ -1,4 +1,14 @@
-export type NodeType = "input" | "output" | "nam" | "ir" | "split" | "merge" | "bypass" | "fx";
+export type NodeType =
+  | "input"
+  | "output"
+  | "nam"
+  | "ir"
+  | "split"
+  | "merge"
+  | "bypass"
+  | "fx"
+  | "media"
+  | "youtube";
 
 export interface NodeParams {
   levelDb: number;
@@ -35,6 +45,10 @@ export interface NodeParams {
   depth?: number;
   fxMode?: string;
   fxId?: string;
+  mediaPlaying?: boolean;
+  mediaLoop?: boolean;
+  mediaSeekSec?: number;
+  mediaUrl?: string;
 }
 
 export interface GraphNode {
@@ -201,6 +215,8 @@ function demoLibrary(): LibraryItem[] {
     { id: "fxg", kind: "fx", name: "Noise Gate", format: "gate", source: "factory", notes: "Before amp" },
     { id: "fx3", kind: "fx", name: "Chorus (soon)", source: "factory", notes: "Coming later" },
     { id: "r1", kind: "routing", name: "Input", format: "input", source: "factory", notes: "Audio input" },
+    { id: "rm", kind: "routing", name: "Media File", format: "media", source: "factory", notes: "Local audio player" },
+    { id: "ry", kind: "routing", name: "YouTube", format: "youtube", source: "factory", notes: "YouTube audio (yt-dlp)" },
     { id: "r2", kind: "routing", name: "Split", format: "split", source: "factory", notes: "Fan-out" },
     { id: "r3", kind: "routing", name: "Merge", format: "merge", source: "factory", notes: "Blend paths" },
     { id: "r4", kind: "routing", name: "Output", format: "output", source: "factory", notes: "Stereo out" },
@@ -261,6 +277,10 @@ export function emptyParams(): NodeParams {
     depth: 0.35,
     fxMode: "",
     fxId: "",
+    mediaPlaying: false,
+    mediaLoop: false,
+    mediaSeekSec: -1,
+    mediaUrl: "",
   };
 }
 
@@ -269,6 +289,9 @@ export const native = {
   setGraph: (g: GraphDocument) => call("setGraph", g),
   updateNode: (id: string, params: NodeParams) => call("updateNode", { id, params }),
   pickFileForNode: (id: string, type: string) => call("pickFileForNode", { id, type }),
+  youtubeSearch: (query: string, maxResults = 8) => call("youtubeSearch", { query, maxResults }),
+  youtubeLoadOntoNode: (id: string, videoId: string, title?: string, url?: string) =>
+    call("youtubeLoadOntoNode", { id, videoId, title: title ?? "", url: url ?? "" }),
   getCpu: () => call("getCpu"),
   getIoInfo: () => call("getIoInfo"),
   getDspStatus: () => call("getDspStatus"),

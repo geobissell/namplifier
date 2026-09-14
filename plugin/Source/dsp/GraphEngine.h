@@ -25,6 +25,8 @@ public:
 
   void updateNodeParams (const juce::String& nodeId, const NodeParams& params);
   void loadFileOntoNode (const juce::String& nodeId, const juce::File& file);
+  void loadYouTubeOntoNode (const juce::String& nodeId, const juce::String& videoIdOrUrl,
+                            const juce::String& title);
 
   float getCpuLoad() const { return mCpuLoad.load(); }
   float getInputPeak() const { return mInputPeak.load(); }
@@ -66,6 +68,7 @@ private:
   void rebuildLocked();
   void loadNamAsync (NamRuntimeNode* node, juce::File file);
   void loadIrAsync (IrRuntimeNode* node, juce::File file);
+  void loadMediaAsync (MediaPlayerRuntimeNode* node, juce::File file);
   std::vector<juce::String> topologicalOrder (const GraphDocument& doc) const;
 
   mutable std::mutex mGraphMutex;

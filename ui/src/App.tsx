@@ -41,6 +41,8 @@ function nodeLabel(n: GraphNode) {
   if (n.type === "output") return "Output";
   if (n.type === "split") return "Split";
   if (n.type === "merge") return "Merge";
+  if (n.type === "media") return "Media File";
+  if (n.type === "youtube") return "YouTube";
   return n.type.toUpperCase();
 }
 
@@ -63,7 +65,7 @@ function isStereoFxNode(n: GraphNode) {
 }
 
 function numInPorts(n: GraphNode) {
-  if (n.type === "input") return 0;
+  if (n.type === "input" || n.type === "media" || n.type === "youtube") return 0;
   if (n.type === "merge") return 2;
   // Output / Host Output: one stereo bus in (wire once; L/R come from the source)
   if (n.type === "output") return 1;
@@ -338,8 +340,23 @@ export default function App() {
     isStandalone: false,
   });
   const [dspStatus, setDspStatus] = useState<
-    Record<string, { loaded: boolean; error?: string; filePath?: string }>
+    Record<
+      string,
+      {
+        loaded: boolean;
+        error?: string;
+        filePath?: string;
+        mediaPositionSec?: number;
+        mediaDurationSec?: number;
+        mediaPlaying?: boolean;
+      }
+    >
   >({});
+  const [ytQuery, setYtQuery] = useState("");
+  const [ytHits, setYtHits] = useState<
+    { id: string; title: string; channel?: string; duration?: number; url?: string }[]
+  >([]);
+  const [ytBusy, setYtBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toneOpen, setToneOpen] = useState(false);
   const [presetsOpen, setPresetsOpen] = useState(false);
@@ -505,11 +522,56 @@ export default function App() {
       }
       const st = await native.getDspStatus();
       if (st.ok) {
-        const map: Record<string, { loaded: boolean; error?: string; filePath?: string }> = {};
-        for (const row of (st.data as { id: string; loaded: boolean; error?: string; filePath?: string }[]) ?? []) {
-          map[row.id] = { loaded: row.loaded, error: row.error, filePath: row.filePath };
+        const map: Record<
+          string,
+          {
+            loaded: boolean;
+            error?: string;
+            filePath?: string;
+            mediaPositionSec?: number;
+            mediaDurationSec?: number;
+            mediaPlaying?: boolean;
+          }
+        > = {};
+        for (const row of (st.data as {
+          id: string;
+          loaded: boolean;
+          error?: string;
+          filePath?: string;
+          mediaPositionSec?: number;
+          mediaDurationSec?: number;
+          mediaPlaying?: boolean;
+        }[]) ?? []) {
+          map[row.id] = {
+            loaded: row.loaded,
+            error: row.error,
+            filePath: row.filePath,
+            mediaPositionSec: row.mediaPositionSec,
+            mediaDurationSec: row.mediaDurationSec,
+            mediaPlaying: row.mediaPlaying,
+          };
         }
         setDspStatus(map);
+
+        // Keep graph mediaPlaying in sync when transport stops naturally.
+        const g = graphRef.current;
+        if (g) {
+          let changed = false;
+          const nodes = g.nodes.map((n) => {
+            if (n.type !== "media" && n.type !== "youtube") return n;
+            const playing = Boolean(map[n.id]?.mediaPlaying);
+            if (Boolean(n.params.mediaPlaying) !== playing) {
+              changed = true;
+              return { ...n, params: { ...n.params, mediaPlaying: playing } };
+            }
+            return n;
+          });
+          if (changed) {
+            const next = { ...g, nodes };
+            graphRef.current = next;
+            setGraph(next);
+          }
+        }
       }
     }, 250);
     return () => window.clearInterval(t);
@@ -1212,7 +1274,7 @@ export default function App() {
           Tone3000
         </button>
         <div className="cpu">
-          {(cpu * 100).toFixed(0)}% CPU
+          <span className="cpu-pct">{(cpu * 100).toFixed(0)}</span>% CPU
           {io.buildId ? <span className="muted"> · {io.buildId}</span> : null}
         </div>
         <div
@@ -1417,7 +1479,7 @@ export default function App() {
                 </div>
                 <div className="name">{nodeLabel(n)}</div>
                 {n.params.cabIncluded && <div className="node-cab">cab included — no IR needed</div>}
-                {(n.type === "nam" || n.type === "ir") && (
+                {(n.type === "nam" || n.type === "ir" || n.type === "media" || n.type === "youtube") && (
                   <div className="node-warn">
                     {dspStatus[n.id]?.error
                       ? "load failed"
@@ -1425,7 +1487,9 @@ export default function App() {
                         ? ""
                         : n.params.filePath || dspStatus[n.id]?.filePath
                           ? "loading…"
-                          : "no model"}
+                          : n.type === "media" || n.type === "youtube"
+                            ? "no media"
+                            : "no model"}
                   </div>
                 )}
                 {Array.from({ length: numInPorts(n) }, (_, i) => (
@@ -1530,6 +1594,247 @@ export default function App() {
                         Input comes from the DAW track — set hardware input / pins in the host, not here.
                       </p>
                     )}
+                  </div>
+                )}
+
+                {(selected.type === "media" || selected.type === "youtube") && (
+                  <div className="inspector-grid">
+                    <div className="inspector-meta">
+                      {dspStatus[selected.id]?.error && (
+                        <p className="error">{dspStatus[selected.id].error}</p>
+                      )}
+                      {!dspStatus[selected.id]?.loaded &&
+                        !!selected.params.filePath &&
+                        !dspStatus[selected.id]?.error && (
+                          <p className="hint">Loading audio…</p>
+                        )}
+                      {selected.type === "media" && (
+                        <p className="hint">
+                          {selected.params.filePath
+                            ? selected.params.filePath.split(/[/\\]/).pop()
+                            : "No file loaded"}
+                        </p>
+                      )}
+                      {selected.type === "youtube" && selected.params.mediaUrl && (
+                        <p className="hint">{selected.params.mediaUrl}</p>
+                      )}
+                    </div>
+
+                    {selected.type === "media" && (
+                      <button
+                        className="pill tiny"
+                        onClick={() => void native.pickFileForNode(selected.id, "media")}
+                      >
+                        Browse audio file
+                      </button>
+                    )}
+
+                    {selected.type === "youtube" && (
+                      <>
+                        <label>
+                          Search YouTube
+                          <div className="media-search-row">
+                            <input
+                              value={ytQuery}
+                              onChange={(e) => setYtQuery(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  void (async () => {
+                                    setYtBusy("Searching…");
+                                    setError(null);
+                                    const res = await native.youtubeSearch(ytQuery.trim());
+                                    setYtBusy(null);
+                                    if (!res.ok) {
+                                      setError(res.error ?? "YouTube search failed");
+                                      setYtHits([]);
+                                      return;
+                                    }
+                                    setYtHits(
+                                      (res.data as {
+                                        id: string;
+                                        title: string;
+                                        channel?: string;
+                                        duration?: number;
+                                        url?: string;
+                                      }[]) ?? []
+                                    );
+                                  })();
+                                }
+                              }}
+                              placeholder="Song, artist, URL…"
+                            />
+                            <button
+                              className="pill tiny"
+                              disabled={!ytQuery.trim() || !!ytBusy}
+                              onClick={() =>
+                                void (async () => {
+                                  setYtBusy("Searching…");
+                                  setError(null);
+                                  const res = await native.youtubeSearch(ytQuery.trim());
+                                  setYtBusy(null);
+                                  if (!res.ok) {
+                                    setError(res.error ?? "YouTube search failed");
+                                    setYtHits([]);
+                                    return;
+                                  }
+                                  setYtHits(
+                                    (res.data as {
+                                      id: string;
+                                      title: string;
+                                      channel?: string;
+                                      duration?: number;
+                                      url?: string;
+                                    }[]) ?? []
+                                  );
+                                })()
+                              }
+                            >
+                              Search
+                            </button>
+                          </div>
+                        </label>
+                        {ytBusy && <p className="hint">{ytBusy}</p>}
+                        {ytHits.length > 0 && (
+                          <div className="yt-results">
+                            {ytHits.map((hit) => (
+                              <button
+                                key={hit.id}
+                                type="button"
+                                className="yt-hit"
+                                onClick={() =>
+                                  void (async () => {
+                                    setYtBusy(`Fetching audio…`);
+                                    setError(null);
+                                    const res = await native.youtubeLoadOntoNode(
+                                      selected.id,
+                                      hit.id,
+                                      hit.title,
+                                      hit.url
+                                    );
+                                    setYtBusy(null);
+                                    if (!res.ok) setError(res.error ?? "Load failed");
+                                    else if (res.data) applyGraph(res.data as GraphDocument);
+                                  })()
+                                }
+                              >
+                                <strong>{hit.title || hit.id}</strong>
+                                <small className="muted">
+                                  {[hit.channel, hit.duration ? `${Math.round(hit.duration)}s` : ""]
+                                    .filter(Boolean)
+                                    .join(" · ")}
+                                </small>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <p className="hint">
+                          Audio only — requires{" "}
+                          <button
+                            type="button"
+                            className="linkish"
+                            onClick={() => void native.openExternal("https://github.com/yt-dlp/yt-dlp")}
+                          >
+                            yt-dlp
+                          </button>{" "}
+                          (and usually ffmpeg) on PATH.
+                        </p>
+                      </>
+                    )}
+
+                    {(() => {
+                      const st = dspStatus[selected.id];
+                      const dur = Math.max(0, st?.mediaDurationSec ?? 0);
+                      const pos = Math.max(0, Math.min(dur, st?.mediaPositionSec ?? 0));
+                      const playing = Boolean(st?.mediaPlaying ?? p.mediaPlaying);
+                      const fmt = (sec: number) => {
+                        const s = Math.max(0, Math.floor(sec));
+                        const m = Math.floor(s / 60);
+                        const r = s % 60;
+                        return `${m}:${r.toString().padStart(2, "0")}`;
+                      };
+                      return (
+                        <div className="media-transport">
+                          <div className="media-transport-row">
+                            <button
+                              className="pill tiny"
+                              disabled={!st?.loaded}
+                              onClick={() =>
+                                void updateParams({
+                                  ...p,
+                                  mediaPlaying: !playing,
+                                  mediaSeekSec: !playing && dur > 0 && pos >= dur - 0.05 ? 0 : -1,
+                                })
+                              }
+                            >
+                              {playing ? "Pause" : "Play"}
+                            </button>
+                            <button
+                              className="pill tiny"
+                              disabled={!st?.loaded}
+                              onClick={() =>
+                                void updateParams({
+                                  ...p,
+                                  mediaPlaying: false,
+                                  mediaSeekSec: 0,
+                                })
+                              }
+                            >
+                              Stop
+                            </button>
+                            <label className="check">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(p.mediaLoop)}
+                                onChange={(e) =>
+                                  void updateParams({ ...p, mediaLoop: e.target.checked, mediaSeekSec: -1 })
+                                }
+                              />
+                              Loop
+                            </label>
+                          </div>
+                          <label>
+                            {fmt(pos)} / {fmt(dur)}
+                            <input
+                              type="range"
+                              min={0}
+                              max={Math.max(0.01, dur)}
+                              step={0.01}
+                              value={pos}
+                              disabled={!st?.loaded || dur <= 0}
+                              onChange={(e) => {
+                                const seek = Number(e.target.value);
+                                void updateParams({
+                                  ...p,
+                                  mediaSeekSec: seek,
+                                  mediaPlaying: playing,
+                                });
+                              }}
+                            />
+                          </label>
+                        </div>
+                      );
+                    })()}
+
+                    <ParamNum
+                      label="Level"
+                      value={p.levelDb}
+                      min={-24}
+                      max={24}
+                      step={0.1}
+                      suffix="dB"
+                      onChange={(v) => void updateParams({ ...p, levelDb: v, mediaSeekSec: -1 })}
+                    />
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={p.bypass}
+                        onChange={(e) =>
+                          void updateParams({ ...p, bypass: e.target.checked, mediaSeekSec: -1 })
+                        }
+                      />
+                      Bypass
+                    </label>
                   </div>
                 )}
 

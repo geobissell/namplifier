@@ -1,6 +1,7 @@
 #include "PluginEditor.h"
 #include "NamplifierUiData.h"
 #include "dsp/CabDetect.h"
+#include "dsp/YouTubeMedia.h"
 #include <juce_cryptography/juce_cryptography.h>
 #include <cstdint>
 
@@ -294,6 +295,8 @@ juce::WebBrowserComponent::Options NamplifierAudioProcessorEditor::makeOptions()
     .withNativeFunction ("libraryAddLocal", bind ("libraryAddLocal"))
     .withNativeFunction ("libraryApplyToNode", bind ("libraryApplyToNode"))
     .withNativeFunction ("libraryAddToGraph", bind ("libraryAddToGraph"))
+    .withNativeFunction ("youtubeSearch", bind ("youtubeSearch"))
+    .withNativeFunction ("youtubeLoadOntoNode", bind ("youtubeLoadOntoNode"))
     .withNativeFunction ("openExternal", bind ("openExternal"))
     .withNativeFunction ("getMaster", bind ("getMaster"))
     .withNativeFunction ("setMaster", bind ("setMaster"));
@@ -372,6 +375,10 @@ juce::String NamplifierAudioProcessorEditor::handleNativeCall (const juce::Strin
         p.depth = params->hasProperty ("depth") ? (float) params->getProperty ("depth") : 0.35f;
         p.fxMode = params->getProperty ("fxMode").toString();
         p.fxId = params->getProperty ("fxId").toString();
+        p.mediaPlaying = params->hasProperty ("mediaPlaying") && (bool) params->getProperty ("mediaPlaying");
+        p.mediaLoop = params->hasProperty ("mediaLoop") && (bool) params->getProperty ("mediaLoop");
+        p.mediaSeekSec = params->hasProperty ("mediaSeekSec") ? (float) params->getProperty ("mediaSeekSec") : -1.0f;
+        p.mediaUrl = params->getProperty ("mediaUrl").toString();
       }
       processor.getGraphEngine().updateNodeParams (id, p);
       return ok();
@@ -391,9 +398,16 @@ juce::String NamplifierAudioProcessorEditor::handleNativeCall (const juce::Strin
       auto* o = args.getDynamicObject();
       if (o == nullptr) return fail ("bad args");
       auto id = o->getProperty ("id").toString();
-      auto type = o->getProperty ("type").toString();
+      auto type = o->getProperty ("type").toString().toLowerCase();
+      juce::String filter = "*.nam";
+      if (type == "ir")
+        filter = "*.wav;*.aif;*.aiff";
+      else if (type == "media" || type == "media_file" || type == "youtube")
+        filter = "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3";
       auto chooser = std::make_shared<juce::FileChooser> (
-        "Load file", juce::File(), type == "ir" ? "*.wav" : "*.nam");
+        type == "media" || type == "youtube" ? "Load audio file" : "Load file",
+        juce::File(),
+        filter);
       chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                             [this, id, chooser] (const juce::FileChooser& fc)
                             {
@@ -404,6 +418,34 @@ juce::String NamplifierAudioProcessorEditor::handleNativeCall (const juce::Strin
                                 web->emitEventIfBrowserIsVisible ("graphChanged", juce::var());
                             });
       return ok();
+    }
+
+    if (method == "youtubeSearch")
+    {
+      auto* o = args.getDynamicObject();
+      if (o == nullptr) return fail ("bad args");
+      const auto query = o->getProperty ("query").toString();
+      const int maxResults = o->hasProperty ("maxResults") ? (int) o->getProperty ("maxResults") : 8;
+      juce::Array<juce::var> results;
+      auto res = namplifier::youtubeSearch (query, maxResults, results);
+      if (res.failed())
+        return fail (res.getErrorMessage());
+      return ok (juce::var (results));
+    }
+
+    if (method == "youtubeLoadOntoNode")
+    {
+      auto* o = args.getDynamicObject();
+      if (o == nullptr) return fail ("bad args");
+      const auto id = o->getProperty ("id").toString();
+      const auto video = o->getProperty ("videoId").toString().isNotEmpty()
+                           ? o->getProperty ("videoId").toString()
+                           : o->getProperty ("url").toString();
+      const auto title = o->getProperty ("title").toString();
+      if (id.isEmpty() || video.isEmpty())
+        return fail ("missing id/video");
+      processor.getGraphEngine().loadYouTubeOntoNode (id, video, title);
+      return ok (processor.getGraphEngine().getGraph().toVar());
     }
 
     if (method == "getCpu")
@@ -1228,6 +1270,16 @@ juce::String NamplifierAudioProcessorEditor::handleNativeCall (const juce::Strin
           node.type = namplifier::NodeType::Merge;
           node.params.displayName = "Merge";
           node.params.mix = 0.5f;
+        }
+        else if (fmt == "media" || fmt == "media_file")
+        {
+          node.type = namplifier::NodeType::MediaFile;
+          node.params.displayName = "Media File";
+        }
+        else if (fmt == "youtube" || fmt == "yt")
+        {
+          node.type = namplifier::NodeType::YouTube;
+          node.params.displayName = "YouTube";
         }
         else
           return fail ("Unknown routing block");

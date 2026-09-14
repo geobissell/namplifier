@@ -170,6 +170,8 @@ target_sources(Namplifier PRIVATE
   plugin/Source/dsp/GraphModel.h
   plugin/Source/dsp/Nodes.cpp
   plugin/Source/dsp/Nodes.h
+  plugin/Source/dsp/YouTubeMedia.cpp
+  plugin/Source/dsp/YouTubeMedia.h
   plugin/Source/dsp/ResamplingNAM.h
   plugin/Source/tone3000/Tone3000Client.cpp
   plugin/Source/tone3000/Tone3000Client.h

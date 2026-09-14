@@ -15,7 +15,9 @@ enum class NodeType
   Split,
   Merge,
   Bypass,
-  Fx
+  Fx,
+  MediaFile,
+  YouTube
 };
 
 struct NodeParams
@@ -71,6 +73,12 @@ struct NodeParams
   juce::String fxMode;
 
   juce::String fxId; // "reverb" | "delay" | "pingpong" | "gate" | "chorus" | "compressor" | "host_out"
+
+  // MediaFile / YouTube transport (sources — no graph inputs)
+  bool mediaPlaying = false;
+  bool mediaLoop = false;
+  float mediaSeekSec = -1.0f; // >= 0 requests a seek; runtime clears after apply
+  juce::String mediaUrl;      // YouTube watch URL or video id
 };
 
 struct GraphNode

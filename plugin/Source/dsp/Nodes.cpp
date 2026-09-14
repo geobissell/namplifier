@@ -1,5 +1,7 @@
 #include "Nodes.h"
 
+#include <juce_audio_formats/juce_audio_formats.h>
+
 namespace namplifier
 {
 namespace
@@ -250,6 +252,216 @@ void IrRuntimeNode::applyStaging()
   mStagedPath.clear();
 }
 
+bool loadAudioFileResampled (const juce::File& file, double targetSampleRate,
+                             juce::AudioBuffer<float>& outStereo, juce::String& errorOut)
+{
+  errorOut.clear();
+  if (! file.existsAsFile())
+  {
+    errorOut = "Audio file not found";
+    return false;
+  }
+
+  juce::AudioFormatManager formats;
+  formats.registerBasicFormats();
+#if JUCE_USE_FLAC
+  formats.registerFormat (new juce::FlacAudioFormat(), false);
+#endif
+#if JUCE_USE_OGGVORBIS
+  formats.registerFormat (new juce::OggVorbisAudioFormat(), false);
+#endif
+
+  std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+  if (reader == nullptr)
+  {
+    errorOut = "Unsupported or unreadable audio file";
+    return false;
+  }
+
+  const auto srcSamples = (int) reader->lengthInSamples;
+  const int srcCh = (int) juce::jmax (1, (int) reader->numChannels);
+  if (srcSamples <= 0)
+  {
+    errorOut = "Audio file is empty";
+    return false;
+  }
+
+  juce::AudioBuffer<float> src (srcCh, srcSamples);
+  if (! reader->read (&src, 0, srcSamples, 0, true, true))
+  {
+    errorOut = "Failed to decode audio file";
+    return false;
+  }
+
+  const double srcRate = reader->sampleRate > 0.0 ? reader->sampleRate : targetSampleRate;
+  const int dstSamples = juce::jmax (1, (int) std::llround ((double) srcSamples * (targetSampleRate / srcRate)));
+  outStereo.setSize (2, dstSamples, false, true, false);
+
+  auto sampleAt = [&] (int ch, double pos) -> float
+  {
+    if (srcSamples <= 1)
+      return src.getSample (juce::jmin (ch, srcCh - 1), 0);
+    const int i0 = juce::jlimit (0, srcSamples - 1, (int) pos);
+    const int i1 = juce::jmin (srcSamples - 1, i0 + 1);
+    const float frac = (float) (pos - (double) i0);
+    const int useCh = juce::jmin (ch, srcCh - 1);
+    return src.getSample (useCh, i0) * (1.0f - frac) + src.getSample (useCh, i1) * frac;
+  };
+
+  const double step = srcRate / targetSampleRate;
+  for (int i = 0; i < dstSamples; ++i)
+  {
+    const double pos = (double) i * step;
+    const float L = sampleAt (0, pos);
+    const float R = srcCh > 1 ? sampleAt (1, pos) : L;
+    outStereo.setSample (0, i, L);
+    outStereo.setSample (1, i, R);
+  }
+  return true;
+}
+
+void MediaPlayerRuntimeNode::prepare (double sampleRate, int)
+{
+  mSampleRate = sampleRate > 0.0 ? sampleRate : 44100.0;
+}
+
+void MediaPlayerRuntimeNode::clearAudio()
+{
+  mReady.store (false, std::memory_order_release);
+  mAudio.setSize (0, 0);
+  mPositionSamples.store (0.0, std::memory_order_relaxed);
+  mPlaying.store (false, std::memory_order_relaxed);
+}
+
+void MediaPlayerRuntimeNode::stageAudio (juce::AudioBuffer<float> buffer, juce::String path)
+{
+  mStagedAudio = std::move (buffer);
+  mStagedPath = std::move (path);
+  mHasStaging.store (true, std::memory_order_release);
+}
+
+void MediaPlayerRuntimeNode::applyStaging()
+{
+  if (! mHasStaging.exchange (false, std::memory_order_acq_rel))
+    return;
+
+  mAudio = std::move (mStagedAudio);
+  filePath = mStagedPath;
+  mStagedPath.clear();
+  mPositionSamples.store (0.0, std::memory_order_relaxed);
+  mReady.store (mAudio.getNumSamples() > 0, std::memory_order_release);
+  lastError.clear();
+}
+
+void MediaPlayerRuntimeNode::setParams (const NodeParams& p)
+{
+  bypass = p.bypass;
+  mGain = juce::Decibels::decibelsToGain (p.levelDb);
+  mLoop.store (p.mediaLoop, std::memory_order_relaxed);
+  displayName = p.displayName;
+  mediaUrl = p.mediaUrl;
+  if (p.filePath.isNotEmpty())
+    filePath = p.filePath;
+
+  if (p.mediaSeekSec >= 0.0f && mSampleRate > 0.0)
+  {
+    const double samples = (double) p.mediaSeekSec * mSampleRate;
+    mSeekSamples.store (samples, std::memory_order_relaxed);
+  }
+
+  const bool wantPlay = p.mediaPlaying && ! p.bypass;
+  if (wantPlay)
+  {
+    const int total = mAudio.getNumSamples();
+    const double pos = mPositionSamples.load (std::memory_order_relaxed);
+    // Fresh Play after natural end: rewind so level tweaks don't re-trigger mid-file.
+    if (! mPlaying.load (std::memory_order_relaxed) && total > 0
+        && pos >= (double) juce::jmax (0, total - 2) && ! p.mediaLoop
+        && p.mediaSeekSec < 0.0f)
+      mPositionSamples.store (0.0, std::memory_order_relaxed);
+    mPlaying.store (true, std::memory_order_relaxed);
+  }
+  else
+  {
+    mPlaying.store (false, std::memory_order_relaxed);
+  }
+}
+
+double MediaPlayerRuntimeNode::positionSec() const
+{
+  if (mSampleRate <= 0.0)
+    return 0.0;
+  return mPositionSamples.load (std::memory_order_relaxed) / mSampleRate;
+}
+
+double MediaPlayerRuntimeNode::durationSec() const
+{
+  if (! mReady.load (std::memory_order_acquire) || mSampleRate <= 0.0)
+    return 0.0;
+  return (double) mAudio.getNumSamples() / mSampleRate;
+}
+
+void MediaPlayerRuntimeNode::processMono (float* buffer, int numSamples)
+{
+  process (buffer, buffer, numSamples);
+}
+
+void MediaPlayerRuntimeNode::process (float* left, float* right, int numSamples)
+{
+  applyStaging();
+
+  if (left == nullptr)
+    return;
+
+  juce::FloatVectorOperations::clear (left, numSamples);
+  if (right != nullptr && right != left)
+    juce::FloatVectorOperations::clear (right, numSamples);
+
+  if (bypass || ! mReady.load (std::memory_order_acquire) || mAudio.getNumSamples() <= 0)
+    return;
+
+  const double seek = mSeekSamples.exchange (-1.0, std::memory_order_acq_rel);
+  if (seek >= 0.0)
+    mPositionSamples.store (juce::jlimit (0.0, (double) juce::jmax (0, mAudio.getNumSamples() - 1), seek),
+                            std::memory_order_relaxed);
+
+  if (! mPlaying.load (std::memory_order_relaxed))
+  {
+    // Still output a single frame at the parked position so meters aren't dead-silent while paused? No — silence when paused.
+    return;
+  }
+
+  const int total = mAudio.getNumSamples();
+  const float* srcL = mAudio.getReadPointer (0);
+  const float* srcR = mAudio.getNumChannels() > 1 ? mAudio.getReadPointer (1) : srcL;
+  const bool loop = mLoop.load (std::memory_order_relaxed);
+  double pos = mPositionSamples.load (std::memory_order_relaxed);
+  const float g = mGain;
+
+  for (int i = 0; i < numSamples; ++i)
+  {
+    if (pos >= (double) total)
+    {
+      if (loop && total > 0)
+        pos = std::fmod (pos, (double) total);
+      else
+      {
+        mPlaying.store (false, std::memory_order_relaxed);
+        mPositionSamples.store ((double) juce::jmax (0, total - 1), std::memory_order_relaxed);
+        break;
+      }
+    }
+
+    const int i0 = juce::jlimit (0, total - 1, (int) pos);
+    left[i] = srcL[i0] * g;
+    if (right != nullptr && right != left)
+      right[i] = srcR[i0] * g;
+    pos += 1.0;
+  }
+
+  mPositionSamples.store (pos, std::memory_order_relaxed);
+}
+
 std::unique_ptr<RuntimeNode> createRuntimeNode (const GraphNode& desc)
 {
   std::unique_ptr<RuntimeNode> node;
@@ -266,6 +478,10 @@ std::unique_ptr<RuntimeNode> createRuntimeNode (const GraphNode& desc)
       break;
     case NodeType::Merge:
       node = std::make_unique<MergeRuntimeNode>();
+      break;
+    case NodeType::MediaFile:
+    case NodeType::YouTube:
+      node = std::make_unique<MediaPlayerRuntimeNode> (desc.type);
       break;
     case NodeType::Fx:
       if (desc.params.fxId.equalsIgnoreCase ("delay")
@@ -308,6 +524,12 @@ std::unique_ptr<RuntimeNode> createRuntimeNode (const GraphNode& desc)
   {
     ir->filePath = desc.params.filePath;
     ir->displayName = desc.params.displayName;
+  }
+  if (auto* media = dynamic_cast<MediaPlayerRuntimeNode*> (node.get()))
+  {
+    media->filePath = desc.params.filePath;
+    media->displayName = desc.params.displayName;
+    media->mediaUrl = desc.params.mediaUrl;
   }
   return node;
 }

@@ -315,6 +315,8 @@ void LibraryManager::ensureSeed()
     const char* notes;
   } routingSeed[] = {
     { "Input", "input", "Audio input — pick host channel in properties" },
+    { "Media File", "media", "Play a local audio file into the graph" },
+    { "YouTube", "youtube", "Search and play YouTube audio (needs yt-dlp)" },
     { "Split", "split", "One in → A/B outs for dual-amp / parallel paths" },
     { "Merge", "merge", "Blend two paths back together" },
     { "Output", "output", "Main stereo out (channels 1–2)" },

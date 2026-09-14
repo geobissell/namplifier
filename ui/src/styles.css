@@ -147,12 +147,15 @@ input {
 
 .master-fader em {
   font-style: normal;
-  min-width: 48px;
+  flex: 0 0 3.6rem;
+  width: 3.6rem;
   color: var(--text);
   font-variant-numeric: tabular-nums;
   text-transform: none;
   letter-spacing: 0;
   font-size: 0.72rem;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .stereo-vu.clipping .stereo-vu-title {
@@ -194,9 +197,18 @@ input {
 }
 
 .cpu {
+  flex: 0 0 7.5rem;
+  width: 7.5rem;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-  min-width: 72px;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.cpu-pct {
+  display: inline-block;
+  width: 3ch;
   text-align: right;
 }
 
@@ -958,6 +970,62 @@ input {
 .node.input,
 .node.output {
   border-top: 3px solid var(--accent);
+}
+.node.media,
+.node.youtube {
+  border-top: 3px solid #c45c26;
+}
+
+.media-search-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.media-search-row input {
+  flex: 1;
+  min-width: 0;
+}
+.media-transport {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.media-transport-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+.yt-results {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 10rem;
+  overflow: auto;
+}
+.yt-hit {
+  text-align: left;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--muted) 35%, transparent);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  color: inherit;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.yt-hit:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+button.linkish {
+  background: none;
+  border: none;
+  color: var(--accent);
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  font: inherit;
 }
 
 .port {

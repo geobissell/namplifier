@@ -1,5 +1,6 @@
 #include "GraphEngine.h"
 #include "CabDetect.h"
+#include "YouTubeMedia.h"
 #include <chrono>
 #include <cmath>
 #include <set>
@@ -125,6 +126,19 @@ void GraphEngine::updateNodeParams (const juce::String& nodeId, const NodeParams
   }
   if (auto it = mNodes.find (nodeId); it != mNodes.end())
     it->second->setParams (params);
+
+  // One-shot seek — clear so subsequent param updates don't re-trigger.
+  if (params.mediaSeekSec >= 0.0f)
+  {
+    for (auto& n : mDocument.nodes)
+    {
+      if (n.id == nodeId)
+      {
+        n.params.mediaSeekSec = -1.0f;
+        break;
+      }
+    }
+  }
 }
 
 void GraphEngine::loadFileOntoNode (const juce::String& nodeId, const juce::File& file)
@@ -153,6 +167,15 @@ void GraphEngine::loadFileOntoNode (const juce::String& nodeId, const juce::File
         ir->lastError = "IR nodes only accept .wav / .aiff cab files — not amp models";
       return;
     }
+    if ((type == NodeType::MediaFile || type == NodeType::YouTube)
+        && ! (file.hasFileExtension (".wav") || file.hasFileExtension (".aif")
+              || file.hasFileExtension (".aiff") || file.hasFileExtension (".flac")
+              || file.hasFileExtension (".ogg") || file.hasFileExtension (".mp3")))
+    {
+      if (auto* media = dynamic_cast<MediaPlayerRuntimeNode*> (raw))
+        media->lastError = "Media nodes accept wav / aiff / flac / ogg / mp3";
+      return;
+    }
 
     for (auto& n : mDocument.nodes)
     {
@@ -161,6 +184,8 @@ void GraphEngine::loadFileOntoNode (const juce::String& nodeId, const juce::File
         n.params.filePath = file.getFullPathName();
         // Keep library/Tone3000 title + artwork; filename is often just a numeric model id.
         if (n.params.displayName.isEmpty())
+          n.params.displayName = file.getFileNameWithoutExtension();
+        else if (type == NodeType::MediaFile)
           n.params.displayName = file.getFileNameWithoutExtension();
         break;
       }
@@ -171,6 +196,8 @@ void GraphEngine::loadFileOntoNode (const juce::String& nodeId, const juce::File
     loadNamAsync (dynamic_cast<NamRuntimeNode*> (raw), file);
   else if (type == NodeType::Ir)
     loadIrAsync (dynamic_cast<IrRuntimeNode*> (raw), file);
+  else if (type == NodeType::MediaFile || type == NodeType::YouTube)
+    loadMediaAsync (dynamic_cast<MediaPlayerRuntimeNode*> (raw), file);
 }
 
 void GraphEngine::loadNamAsync (NamRuntimeNode* node, juce::File file)
@@ -350,6 +377,152 @@ void GraphEngine::loadIrAsync (IrRuntimeNode* node, juce::File file)
   });
 }
 
+void GraphEngine::loadMediaAsync (MediaPlayerRuntimeNode* node, juce::File file)
+{
+  if (node == nullptr)
+    return;
+
+  const juce::String nodeId = node->id;
+  node->lastError.clear();
+  const double sr = mSampleRate > 0.0 ? mSampleRate : 48000.0;
+
+  std::lock_guard lock (mJobMutex);
+  mJobs.push ([this, nodeId, file, sr]
+  {
+    juce::String error;
+    juce::AudioBuffer<float> stereo;
+    if (! loadAudioFileResampled (file, sr, stereo, error))
+    {
+      std::lock_guard graphLock (mGraphMutex);
+      if (auto it = mNodes.find (nodeId); it != mNodes.end())
+        if (auto* media = dynamic_cast<MediaPlayerRuntimeNode*> (it->second.get()))
+          media->lastError = error;
+    }
+    else
+    {
+      std::lock_guard graphLock (mGraphMutex);
+      auto it = mNodes.find (nodeId);
+      if (it == mNodes.end())
+        return;
+      auto* media = dynamic_cast<MediaPlayerRuntimeNode*> (it->second.get());
+      if (media == nullptr)
+        return;
+
+      const auto path = file.getFullPathName();
+      media->stageAudio (std::move (stereo), path);
+      media->filePath = path;
+      media->lastError.clear();
+      for (auto& n : mDocument.nodes)
+        if (n.id == nodeId)
+        {
+          n.params.filePath = path;
+          if (n.params.displayName.isEmpty())
+            n.params.displayName = file.getFileNameWithoutExtension();
+          media->displayName = n.params.displayName;
+          break;
+        }
+    }
+
+    if (onAsyncLoadFinished)
+      juce::MessageManager::callAsync ([cb = onAsyncLoadFinished] { if (cb) cb(); });
+  });
+}
+
+void GraphEngine::loadYouTubeOntoNode (const juce::String& nodeId, const juce::String& videoIdOrUrl,
+                                       const juce::String& title)
+{
+  MediaPlayerRuntimeNode* raw = nullptr;
+  {
+    std::lock_guard lock (mGraphMutex);
+    auto it = mNodes.find (nodeId);
+    if (it == mNodes.end())
+      return;
+    raw = dynamic_cast<MediaPlayerRuntimeNode*> (it->second.get());
+    if (raw == nullptr || raw->type() != NodeType::YouTube)
+      return;
+
+    raw->lastError = "Downloading…";
+    for (auto& n : mDocument.nodes)
+    {
+      if (n.id == nodeId)
+      {
+        n.params.mediaUrl = videoIdOrUrl;
+        if (title.isNotEmpty())
+          n.params.displayName = title;
+        n.params.mediaPlaying = false;
+        break;
+      }
+    }
+    raw->mediaUrl = videoIdOrUrl;
+    if (title.isNotEmpty())
+      raw->displayName = title;
+  }
+
+  const juce::String idCopy = nodeId;
+  const juce::String urlCopy = videoIdOrUrl;
+  const juce::String titleCopy = title;
+  const double sr = mSampleRate > 0.0 ? mSampleRate : 48000.0;
+
+  std::lock_guard lock (mJobMutex);
+  mJobs.push ([this, idCopy, urlCopy, titleCopy, sr]
+  {
+    juce::File wav;
+    juce::String fetchedTitle;
+    auto result = youtubeDownloadAudio (urlCopy, youtubeCacheDir(), wav, fetchedTitle);
+    if (result.failed())
+    {
+      std::lock_guard graphLock (mGraphMutex);
+      if (auto it = mNodes.find (idCopy); it != mNodes.end())
+        if (auto* media = dynamic_cast<MediaPlayerRuntimeNode*> (it->second.get()))
+          media->lastError = result.getErrorMessage();
+      if (onAsyncLoadFinished)
+        juce::MessageManager::callAsync ([cb = onAsyncLoadFinished] { if (cb) cb(); });
+      return;
+    }
+
+    juce::String error;
+    juce::AudioBuffer<float> stereo;
+    if (! loadAudioFileResampled (wav, sr, stereo, error))
+    {
+      std::lock_guard graphLock (mGraphMutex);
+      if (auto it = mNodes.find (idCopy); it != mNodes.end())
+        if (auto* media = dynamic_cast<MediaPlayerRuntimeNode*> (it->second.get()))
+          media->lastError = error;
+    }
+    else
+    {
+      std::lock_guard graphLock (mGraphMutex);
+      auto it = mNodes.find (idCopy);
+      if (it == mNodes.end())
+        return;
+      auto* media = dynamic_cast<MediaPlayerRuntimeNode*> (it->second.get());
+      if (media == nullptr)
+        return;
+
+      const auto path = wav.getFullPathName();
+      media->stageAudio (std::move (stereo), path);
+      media->filePath = path;
+      media->lastError.clear();
+      const auto label = titleCopy.isNotEmpty() ? titleCopy
+                         : (fetchedTitle.isNotEmpty() ? fetchedTitle : wav.getFileNameWithoutExtension());
+      media->displayName = label;
+      for (auto& n : mDocument.nodes)
+        if (n.id == idCopy)
+        {
+          n.params.filePath = path;
+          n.params.displayName = label;
+          n.params.mediaUrl = urlCopy;
+          break;
+        }
+    }
+
+    if (onAsyncLoadFinished)
+      juce::MessageManager::callAsync ([cb = onAsyncLoadFinished] { if (cb) cb(); });
+  });
+
+  juce::ignoreUnused (raw);
+}
+
 juce::var GraphEngine::getDspStatus() const
 {
   std::lock_guard lock (mGraphMutex);
@@ -363,6 +536,8 @@ juce::var GraphEngine::getDspStatus() const
 
     bool loaded = false;
     juce::String err;
+    double pos = 0.0, dur = 0.0;
+    bool playing = false;
     if (auto it = mNodes.find (desc.id); it != mNodes.end())
     {
       if (auto* nam = dynamic_cast<NamRuntimeNode*> (it->second.get()))
@@ -375,9 +550,20 @@ juce::var GraphEngine::getDspStatus() const
         loaded = ir->hasIr();
         err = ir->lastError;
       }
+      else if (auto* media = dynamic_cast<MediaPlayerRuntimeNode*> (it->second.get()))
+      {
+        loaded = media->hasAudio();
+        err = media->lastError;
+        pos = media->positionSec();
+        dur = media->durationSec();
+        playing = media->isPlaying();
+      }
     }
     o->setProperty ("loaded", loaded);
     o->setProperty ("error", err);
+    o->setProperty ("mediaPositionSec", pos);
+    o->setProperty ("mediaDurationSec", dur);
+    o->setProperty ("mediaPlaying", playing);
     arr.add (juce::var (o));
   }
   return juce::var (arr);
@@ -431,8 +617,10 @@ void GraphEngine::rebuildLocked()
     {
       auto* ir = dynamic_cast<IrRuntimeNode*> (it->second.get());
       auto* nam = dynamic_cast<NamRuntimeNode*> (it->second.get());
+      auto* media = dynamic_cast<MediaPlayerRuntimeNode*> (it->second.get());
       const juce::String prevIr = ir != nullptr ? ir->filePath : juce::String();
       const juce::String prevNam = nam != nullptr ? nam->filePath : juce::String();
+      const juce::String prevMedia = media != nullptr ? media->filePath : juce::String();
       it->second->setParams (desc.params);
       next[desc.id] = std::move (it->second);
       // setParams does not load files — reload when path appears/changes (same as IR).
@@ -442,6 +630,9 @@ void GraphEngine::rebuildLocked()
       if (nam != nullptr && desc.params.filePath.isNotEmpty()
           && (desc.params.filePath != prevNam || ! nam->hasModel()))
         loadNamAsync (nam, juce::File (desc.params.filePath));
+      if (media != nullptr && desc.params.filePath.isNotEmpty()
+          && (desc.params.filePath != prevMedia || ! media->hasAudio()))
+        loadMediaAsync (media, juce::File (desc.params.filePath));
     }
     else
     {
@@ -456,6 +647,12 @@ void GraphEngine::rebuildLocked()
       {
         auto* ir = dynamic_cast<IrRuntimeNode*> (node.get());
         loadIrAsync (ir, juce::File (desc.params.filePath));
+      }
+      if ((desc.type == NodeType::MediaFile || desc.type == NodeType::YouTube)
+          && desc.params.filePath.isNotEmpty())
+      {
+        auto* media = dynamic_cast<MediaPlayerRuntimeNode*> (node.get());
+        loadMediaAsync (media, juce::File (desc.params.filePath));
       }
       next[desc.id] = std::move (node);
     }
@@ -593,6 +790,7 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
     {
       if (d == nullptr) return 1;
       if (d->type == NodeType::Input) return 0;
+      if (d->type == NodeType::MediaFile || d->type == NodeType::YouTube) return 0;
       if (d->type == NodeType::Merge) return 2;
       if (d->type == NodeType::Output) return 1; // one stereo bus in
       if (isStereoFxNode (d)) return 2;
