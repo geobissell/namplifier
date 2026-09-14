@@ -25,11 +25,18 @@ bool NamplifierAudioProcessor::isBusesLayoutSupported (const BusesLayout& layout
 {
   const auto inns = layouts.getMainInputChannelSet();
   const auto outs = layouts.getMainOutputChannelSet();
+
+  // VST3 hosts (especially Reaper) toggle bus enablement during negotiation.
+  // Rejecting disabled layouts can leave us "active" while the wrapper feeds silence
+  // → high-gain NAM turns zeros into hiss/oscillation.
+  if (inns.isDisabled() || outs.isDisabled())
+    return true;
+
   const bool inOk = inns == juce::AudioChannelSet::mono()
                     || inns == juce::AudioChannelSet::stereo();
   const bool outOk = outs == juce::AudioChannelSet::mono()
                      || outs == juce::AudioChannelSet::stereo();
-  return inOk && outOk && ! inns.isDisabled() && ! outs.isDisabled();
+  return inOk && outOk;
 }
 
 void NamplifierAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)

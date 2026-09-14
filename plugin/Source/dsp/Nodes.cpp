@@ -93,6 +93,17 @@ void NamRuntimeNode::processMono (float* buffer, int numSamples)
   if (numSamples > mMaxBlock)
     prepare (mSampleRate, numSamples);
 
+  // High-gain NAMs turn digital silence into a constant hiss/whistle. If the host
+  // isn't feeding us (bus negotiation / monitoring), stay silent instead.
+  float inPeak = 0.0f;
+  for (int i = 0; i < numSamples; ++i)
+    inPeak = juce::jmax (inPeak, std::abs (buffer[i]));
+  if (inPeak < 1.0e-5f)
+  {
+    juce::FloatVectorOperations::clear (buffer, numSamples);
+    return;
+  }
+
   mInPtr[0] = buffer;
   mOutPtr[0] = mScratch.data();
   try
@@ -101,7 +112,6 @@ void NamRuntimeNode::processMono (float* buffer, int numSamples)
   }
   catch (...)
   {
-    // Never let a NAM/resampler failure silence or corrupt the host callback.
     return;
   }
   juce::FloatVectorOperations::copy (buffer, mScratch.data(), numSamples);
@@ -167,7 +177,7 @@ void NamRuntimeNode::applyStaging()
   mModel = std::move (mStaged);
   if (mModel)
   {
-    mModel->Reset (mSampleRate, mMaxBlock);
+    // Already Reset/prewarmed on the worker — Reset here pops on the audio thread.
     if (auto* slim = mModel->getSlimmableModel())
       slim->SetSlimmableSize (mSlim);
     refreshNormGain();

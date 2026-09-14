@@ -79,7 +79,8 @@ jobs:
           Write-Host "Using CMake generator: $gen"
 
           cmake -B build -G $gen -A x64 `
-            -DNamplifier_TONE3000_KEY="$env:Namplifier_TONE3000_KEY"
+            -DNamplifier_TONE3000_KEY="$env:Namplifier_TONE3000_KEY" `
+            -DNAMPLIFIER_BUILD_ID="b${{ github.run_number }}"
 
       - name: Build Standalone + VST3
         run: cmake --build build --config Release --target Namplifier_Standalone Namplifier_VST3 --parallel 4
@@ -157,7 +158,8 @@ jobs:
           cmake -B build -G Xcode \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
-            -DNamplifier_TONE3000_KEY="$Namplifier_TONE3000_KEY"
+            -DNamplifier_TONE3000_KEY="$Namplifier_TONE3000_KEY" \
+            -DNAMPLIFIER_BUILD_ID="b${{ github.run_number }}"
 
       - name: Build Standalone + VST3 + AU
         run: |

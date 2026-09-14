@@ -530,8 +530,16 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
   };
 
   // Meter host signal before input trim so VU reflects what the DAW is actually sending.
-  smoothPeak (mInputPeakL, channelPeak (0));
-  smoothPeak (mInputPeakR, channelPeak (numChans > 1 ? 1 : 0));
+  const float hostInL = channelPeak (0);
+  const float hostInR = channelPeak (numChans > 1 ? 1 : 0);
+  const float hostInPeak = juce::jmax (hostInL, hostInR);
+  smoothPeak (mInputPeakL, hostInL);
+  smoothPeak (mInputPeakR, hostInR);
+
+  // Keep a dry copy for failover if the graph somehow kills a live input.
+  juce::AudioBuffer<float> dryCopy (numChans, numSamples);
+  for (int c = 0; c < numChans; ++c)
+    dryCopy.copyFrom (c, 0, buffer, c, 0, numSamples);
 
   // Global input trim — pull down hot interfaces before NAM
   const float inG = juce::Decibels::decibelsToGain (mMasterInDb.load());
@@ -539,6 +547,8 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
     buffer.applyGain (inG);
 
   const int inCh = juce::jlimit (0, numChans - 1, mInputChannel);
+  if (mMono.getNumChannels() < 1 || mMono.getNumSamples() < numSamples)
+    mMono.setSize (1, numSamples, false, false, true);
   mMono.copyFrom (0, 0, buffer, inCh, 0, numSamples);
   smoothPeak (mInputPeak, channelPeak (inCh));
 
@@ -903,29 +913,38 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
   bool clipped = false;
 
   float meterL = 0.0f, meterR = 0.0f;
+  float outPeak = 0.0f;
   for (int ch = 0; ch < numChans; ++ch)
   {
     float* p = buffer.getWritePointer (ch);
     for (int i = 0; i < numSamples; ++i)
     {
       float s = p[i] * masterG;
-      if (std::abs (s) >= 0.99f)
-        clipped = true;
-      s = juce::jlimit (-1.0f, 1.0f, s);
+      if (s > 1.0f) { s = 1.0f; clipped = true; }
+      else if (s < -1.0f) { s = -1.0f; clipped = true; }
       p[i] = s;
-      if (ch == 0)
-        meterL = juce::jmax (meterL, std::abs (s));
-      else if (ch == 1)
-        meterR = juce::jmax (meterR, std::abs (s));
+      const float a = std::abs (s);
+      outPeak = juce::jmax (outPeak, a);
+      if (ch == 0) meterL = juce::jmax (meterL, a);
+      if (ch == (numChans > 1 ? 1 : 0)) meterR = juce::jmax (meterR, a);
     }
   }
-  if (numChans == 1)
-    meterR = meterL;
 
-  mWasClipping.store (clipped);
-  smoothPeak (mOutputPeak, juce::jmax (meterL, meterR));
+  // If the DAW sent real audio but we produced near-silence (broken bus / empty
+  // graph path), fall back to dry host audio so the track isn't dead.
+  if (hostInPeak > 1.0e-4f && outPeak < 1.0e-5f)
+  {
+    for (int c = 0; c < numChans; ++c)
+      buffer.copyFrom (c, 0, dryCopy, c, 0, numSamples);
+    meterL = hostInL;
+    meterR = hostInR;
+    outPeak = hostInPeak;
+  }
+
   smoothPeak (mOutputPeakL, meterL);
   smoothPeak (mOutputPeakR, meterR);
+  smoothPeak (mOutputPeak, outPeak);
+  mWasClipping.store (clipped);
 
   const auto elapsed = std::chrono::steady_clock::now() - start;
   const double blockSec = (double) numSamples / mSampleRate;

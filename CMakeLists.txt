@@ -162,6 +162,9 @@ target_compile_definitions(Namplifier
     JUCE_DISPLAY_SPLASH_SCREEN=0
     NAMPLIFIER_TONE3000_KEY="${Namplifier_TONE3000_KEY}"
 )
+if(DEFINED NAMPLIFIER_BUILD_ID AND NOT NAMPLIFIER_BUILD_ID STREQUAL "")
+  target_compile_definitions(Namplifier PUBLIC NAMPLIFIER_BUILD_ID="${NAMPLIFIER_BUILD_ID}")
+endif()
 if(WIN32)
   target_compile_definitions(Namplifier
     PUBLIC
