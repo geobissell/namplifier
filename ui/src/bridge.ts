@@ -86,6 +86,7 @@ export interface IoInfo {
   activeInputChannel: number;
   activeOutputChannel?: number;
   inputMuted?: boolean;
+  isStandalone?: boolean;
   masterInDb?: number;
   masterOutDb?: number;
   masterDb?: number;
@@ -164,8 +165,9 @@ async function call(method: string, args?: unknown): Promise<NativeResult> {
           inputPeakR: 0.08,
           outputPeakL: 0.05,
           outputPeakR: 0.04,
-          activeInputChannel: 1,
+          activeInputChannel: 0,
           activeOutputChannel: 0,
+          isStandalone: true,
         },
       };
     return { ok: false, error: "Native bridge unavailable (open inside Namplifier)" };

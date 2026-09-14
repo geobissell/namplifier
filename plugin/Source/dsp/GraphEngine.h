@@ -36,6 +36,9 @@ public:
   int getActiveInputChannel() const;
   int getActiveOutputChannel() const { return mOutputChannel; }
   void setHostChannelCounts (int numIns, int numOuts);
+  /** When true (VST/AU), ignore per-node device channel picks — the DAW owns routing. */
+  void setDawHosted (bool dawHosted);
+  bool isDawHosted() const { return mDawHosted; }
   int getNumInputChannels() const { return mHostIns; }
   int getNumOutputChannels() const { return mHostOuts; }
   juce::var getDspStatus() const;
@@ -86,6 +89,7 @@ private:
   std::atomic<float> mOutputPeakR { 0.0f };
   int mHostIns = 2;
   int mHostOuts = 2;
+  bool mDawHosted = false;
   int mInputChannel = 0;
   int mOutputChannel = 0;
   float mOutputPan = 0.0f;

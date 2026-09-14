@@ -335,6 +335,7 @@ export default function App() {
     outputPeakR: 0,
     activeInputChannel: 0,
     activeOutputChannel: 0,
+    isStandalone: false,
   });
   const [dspStatus, setDspStatus] = useState<
     Record<string, { loaded: boolean; error?: string; filePath?: string }>
@@ -437,12 +438,16 @@ export default function App() {
 
   const filteredLibrary = useMemo(() => {
     const q = libQuery.trim().toLowerCase();
+    const standalone = io.isStandalone === true;
     return library.filter((item) => {
+      // Host Output remaps interface outs — only meaningful in standalone.
+      if (!standalone && (item.format === "host_output" || item.name === "Host Output"))
+        return false;
       if (libFilter !== "all" && item.kind !== libFilter) return false;
       if (!q) return true;
       return item.name.toLowerCase().includes(q) || (item.source ?? "").toLowerCase().includes(q);
     });
-  }, [library, libFilter, libQuery]);
+  }, [library, libFilter, libQuery, io.isStandalone]);
 
   const refreshLibrary = useCallback(async () => {
     const res = await native.getLibrary();
@@ -1498,30 +1503,29 @@ export default function App() {
                 {selected.type === "input" && (
                   <div className="inspector-grid">
                     <StereoVu title="IN" peakL={io.inputPeakL ?? 0} peakR={io.inputPeakR ?? 0} />
-                    {inputChoices > 1 && (
-                      <label>
-                        Plugin buffer channel
-                        <select
-                          value={p.inputChannel ?? 0}
-                          onChange={(e) =>
-                            void updateParams({ ...p, inputChannel: Number(e.target.value) })
-                          }
-                        >
-                          {Array.from({ length: inputChoices }, (_, i) => (
-                            <option key={i} value={i}>
-                              {inputChoices === 2
-                                ? i === 0
-                                  ? "Left (1)"
-                                  : "Right (2)"
-                                : `Channel ${i + 1}`}
-                            </option>
-                          ))}
-                        </select>
-                        <small className="muted">
-                          Not the same as Reaper&apos;s track &quot;Input 2&quot;. Guitar on a
-                          stereo track almost always arrives on Left — leave this on Left (1).
-                        </small>
-                      </label>
+                    {io.isStandalone ? (
+                      inputChoices > 1 && (
+                        <label>
+                          Interface input
+                          <select
+                            value={p.inputChannel ?? 0}
+                            onChange={(e) =>
+                              void updateParams({ ...p, inputChannel: Number(e.target.value) })
+                            }
+                          >
+                            {Array.from({ length: inputChoices }, (_, i) => (
+                              <option key={i} value={i}>
+                                In {i + 1}
+                              </option>
+                            ))}
+                          </select>
+                          <small className="muted">Which device channel feeds this Input node.</small>
+                        </label>
+                      )
+                    ) : (
+                      <p className="hint">
+                        Input comes from the DAW track — set hardware input / pins in the host, not here.
+                      </p>
                     )}
                   </div>
                 )}
@@ -1547,10 +1551,10 @@ export default function App() {
                       onChange={(v) => void updateParams({ ...p, pan: v })}
                       onReset={() => void updateParams({ ...p, pan: 0 })}
                     />
-                    {isHostOutput(selected) ? (
+                    {io.isStandalone && isHostOutput(selected) ? (
                       <>
                         <label>
-                          Host L channel
+                          Interface L out
                           <select
                             value={p.outputChannel ?? 0}
                             onChange={(e) =>
@@ -1565,7 +1569,7 @@ export default function App() {
                           </select>
                         </label>
                         <label>
-                          Host R channel
+                          Interface R out
                           <select
                             value={p.outputChannelR ?? (p.outputChannel ?? 0) + 1}
                             onChange={(e) =>
@@ -1580,6 +1584,8 @@ export default function App() {
                           </select>
                         </label>
                       </>
+                    ) : !io.isStandalone ? (
+                      <p className="hint">Output returns to the DAW track — routing is controlled by the host.</p>
                     ) : null}
                   </div>
                 )}

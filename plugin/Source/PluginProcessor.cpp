@@ -3,15 +3,17 @@
 
 NamplifierAudioProcessor::NamplifierAudioProcessor()
   : AudioProcessor (BusesProperties()
-                      .withInput ("Input", juce::AudioChannelSet::discreteChannels (8), true)
-                      .withOutput ("Output", juce::AudioChannelSet::discreteChannels (8), true))
+                      .withInput ("Input", juce::AudioChannelSet::stereo(), true)
+                      .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
+  graphEngine.setDawHosted (wrapperType != wrapperType_Standalone);
 }
 
 NamplifierAudioProcessor::~NamplifierAudioProcessor() = default;
 
 void NamplifierAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
+  graphEngine.setDawHosted (wrapperType != wrapperType_Standalone);
   graphEngine.setHostChannelCounts (getTotalNumInputChannels(), getTotalNumOutputChannels());
   graphEngine.prepare (sampleRate, samplesPerBlock);
 }

@@ -93,6 +93,11 @@ void GraphEngine::setHostChannelCounts (int numIns, int numOuts)
   mHostOuts = juce::jmax (1, numOuts);
 }
 
+void GraphEngine::setDawHosted (bool dawHosted)
+{
+  mDawHosted = dawHosted;
+}
+
 int GraphEngine::getActiveInputChannel() const
 {
   return mInputChannel;
@@ -597,40 +602,42 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
     if (node->type() == NodeType::Input)
     {
       int ch = 0;
-      if (auto* d = findDesc())
-        ch = d->params.inputChannel;
-      ch = juce::jlimit (0, numChans - 1, ch);
-
-      // Reaper "Input 2" is a hardware source already on the track — it usually
-      // arrives on plugin L (ch 0). Users often pick "Channel 2" (R) and starve
-      // the NAM with silence → high-gain self-noise. Prefer the loudest bus
-      // channel when the selection is essentially empty.
-      if (numChans > 1)
+      if (! mDawHosted)
       {
-        auto blockPeak = [&] (int c) -> float
-        {
-          float peak = 0.0f;
-          const float* p = buffer.getReadPointer (c);
-          for (int i = 0; i < numSamples; ++i)
-            peak = juce::jmax (peak, std::abs (p[i]));
-          return peak;
-        };
+        if (auto* d = findDesc())
+          ch = d->params.inputChannel;
+        ch = juce::jlimit (0, numChans - 1, ch);
 
-        const float selPeak = blockPeak (ch);
-        int bestCh = ch;
-        float bestPeak = selPeak;
-        for (int c = 0; c < numChans; ++c)
+        // Standalone only: if the picked device channel is empty but another isn't,
+        // use the loudest (avoids silent NAM from a wrong interface channel).
+        if (numChans > 1)
         {
-          const float pk = blockPeak (c);
-          if (pk > bestPeak)
+          auto blockPeak = [&] (int c) -> float
           {
-            bestPeak = pk;
-            bestCh = c;
+            float peak = 0.0f;
+            const float* p = buffer.getReadPointer (c);
+            for (int i = 0; i < numSamples; ++i)
+              peak = juce::jmax (peak, std::abs (p[i]));
+            return peak;
+          };
+
+          const float selPeak = blockPeak (ch);
+          int bestCh = ch;
+          float bestPeak = selPeak;
+          for (int c = 0; c < numChans; ++c)
+          {
+            const float pk = blockPeak (c);
+            if (pk > bestPeak)
+            {
+              bestPeak = pk;
+              bestCh = c;
+            }
           }
+          if (bestPeak > 1.0e-4f && selPeak < bestPeak * 0.05f)
+            ch = bestCh;
         }
-        if (bestPeak > 1.0e-4f && selPeak < bestPeak * 0.05f)
-          ch = bestCh;
       }
+      // DAW: always host buffer L (ch 0). Track/hardware routing is the host's job.
 
       mInputChannel = ch;
       juce::FloatVectorOperations::copy (outSig.L.data(), buffer.getReadPointer (ch), numSamples);
@@ -776,8 +783,9 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
     if (signals.find (desc.id) == signals.end())
       continue;
 
-    const bool hostOut = desc.params.fxId.equalsIgnoreCase ("host_out")
-                         || desc.params.displayName.containsIgnoreCase ("host");
+    const bool hostOut = ! mDawHosted
+                         && (desc.params.fxId.equalsIgnoreCase ("host_out")
+                             || desc.params.displayName.containsIgnoreCase ("host"));
     int hostL = 0;
     int hostR = numChans > 1 ? 1 : 0;
     if (hostOut)
@@ -806,8 +814,9 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
     const float balL = pan > 0.0f ? (1.0f - pan) : 1.0f;
     const float balR = pan < 0.0f ? (1.0f + pan) : 1.0f;
 
-    const bool hostOut = desc.params.fxId.equalsIgnoreCase ("host_out")
-                         || desc.params.displayName.containsIgnoreCase ("host");
+    const bool hostOut = ! mDawHosted
+                         && (desc.params.fxId.equalsIgnoreCase ("host_out")
+                             || desc.params.displayName.containsIgnoreCase ("host"));
     int hostL = 0;
     int hostR = numChans > 1 ? 1 : 0;
     if (hostOut)
