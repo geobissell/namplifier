@@ -1,0 +1,67 @@
+# Build trees
+build/
+build-*/
+cmake-build-*/
+out/
+cmake-build-*/
+
+# IDE / OS
+.idea/
+.vs/
+.vscode/
+.cursor/
+*.user
+*.suo
+*.ncb
+*.opendb
+*.VC.db
+.DS_Store
+Thumbs.db
+
+# Node / UI build output (CI builds this; don't commit)
+ui/node_modules/
+ui/dist/
+*.tsbuildinfo
+
+# Secrets — never commit real keys
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+credentials.json
+secrets/
+
+# Local CMake / tooling junk
+CMakeUserPresets.json
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+*.obj
+*.o
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.log
+nam_load_test*
+build_nam_test.cmake
+
+# Plugin / binary artefacts
+*.vst3
+*.exe
+*.dll
+!third_party/**/*.dll
+
+# Large / licensed SDKs (keep README only — see that file)
+third_party/asiosdk/**
+!third_party/asiosdk/README.md
+!third_party/asiosdk/README.md/**
+
+# User content / caches
+*.nam
+!resources/**/*.nam
+*.wav
+*.aiff
+*.aif

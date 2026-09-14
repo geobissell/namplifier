@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "name": "Empty",
+  "nodes": [
+    { "id": "input", "type": "input", "x": 80, "y": 200, "params": { "levelDb": 0, "mix": 1, "slim": 1, "bypass": false, "filePath": "", "displayName": "", "toneId": "", "modelId": "" } },
+    { "id": "output", "type": "output", "x": 520, "y": 200, "params": { "levelDb": 0, "mix": 1, "slim": 1, "bypass": false, "filePath": "", "displayName": "", "toneId": "", "modelId": "" } }
+  ],
+  "edges": [{ "id": "e1", "fromNode": "input", "fromPort": 0, "toNode": "output", "toPort": 0 }]
+}
