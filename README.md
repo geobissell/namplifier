@@ -83,10 +83,17 @@ ui/dist/...
 
 ## CI / Releases
 
-Pushing or merging to `main` / `master` runs `.github/workflows/build-windows.yml`, which builds the UI, Standalone, and VST3.
+Pushing or merging to `main` / `master` runs `.github/workflows/build.yml`:
 
-- **Actions artefacts** — available on every push and PR (30-day retention).
-- **GitHub Releases** — on push/merge to `main` / `master` only, a new release (`build-<run>`) is published with downloadable Standalone and VST3 zips. The newest build is marked **Latest**.
+| Platform | Artefacts |
+|---|---|
+| **Windows** | Standalone `.exe` + **VST3** |
+| **macOS** (universal arm64 + x86_64) | Standalone `.app` + **VST3** + **AU** |
+
+- **Actions artefacts** — every push and PR (30-day retention).
+- **GitHub Releases** — on push/merge to `main` / `master`, a release (`build-<run>`) is published with all platform zips. Newest is marked **Latest**.
+
+macOS builds are unsigned (Gatekeeper: right-click → Open, or `xattr -cr` on the app/plugin).
 
 Add repository secret **`Namplifier_TONE3000_KEY`** so CI builds include Tone3000 support.
 

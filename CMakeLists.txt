@@ -119,6 +119,16 @@ else()
   set(UI_ASSET_LIB "")
 endif()
 
+set(Namplifier_FORMATS VST3 Standalone)
+if(APPLE)
+  list(APPEND Namplifier_FORMATS AU)
+endif()
+
+set(Namplifier_NEEDS_WEBVIEW2 FALSE)
+if(WIN32)
+  set(Namplifier_NEEDS_WEBVIEW2 TRUE)
+endif()
+
 juce_add_plugin(Namplifier
   COMPANY_NAME "Namplifier"
   BUNDLE_ID com.namplifier.plugin
@@ -130,9 +140,9 @@ juce_add_plugin(Namplifier
   COPY_PLUGIN_AFTER_BUILD FALSE
   PLUGIN_MANUFACTURER_CODE Namp
   PLUGIN_CODE Namp
-  FORMATS VST3 Standalone
+  FORMATS ${Namplifier_FORMATS}
   PRODUCT_NAME "Namplifier"
-  NEEDS_WEBVIEW2 TRUE
+  NEEDS_WEBVIEW2 ${Namplifier_NEEDS_WEBVIEW2}
 )
 
 target_sources(Namplifier PRIVATE
@@ -161,14 +171,19 @@ target_sources(Namplifier PRIVATE
 target_compile_definitions(Namplifier
   PUBLIC
     JUCE_WEB_BROWSER=1
-    JUCE_USE_WIN_WEBVIEW2=1
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_DISPLAY_SPLASH_SCREEN=0
     NAMPLIFIER_TONE3000_KEY="${Namplifier_TONE3000_KEY}"
-    JUCE_WASAPI=1
-    JUCE_DIRECTSOUND=0
 )
+if(WIN32)
+  target_compile_definitions(Namplifier
+    PUBLIC
+      JUCE_USE_WIN_WEBVIEW2=1
+      JUCE_WASAPI=1
+      JUCE_DIRECTSOUND=0
+  )
+endif()
 if(Namplifier_HAS_ASIO)
   target_compile_definitions(Namplifier PUBLIC JUCE_ASIO=1)
   target_include_directories(Namplifier PRIVATE

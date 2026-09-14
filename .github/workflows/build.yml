@@ -1,0 +1,252 @@
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows (Standalone + VST3)
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Build UI
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install WebView2 NuGet package
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:LOCALAPPDATA "PackageManagement\NuGet\Packages"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Invoke-WebRequest -Uri "https://dist.nuget.org/win-x86-commandline/v6.11.0/nuget.exe" -OutFile nuget.exe
+          .\nuget.exe install Microsoft.Web.WebView2 -Version 1.0.2903.40 -OutputDirectory $out -NonInteractive
+          $pkg = Get-ChildItem $out -Directory -Filter "Microsoft.Web.WebView2*" | Select-Object -First 1
+          if (-not $pkg) { throw "WebView2 NuGet package not found under $out" }
+          Write-Host "Installed $($pkg.Name)"
+
+      - name: Configure CMake
+        shell: pwsh
+        env:
+          Namplifier_TONE3000_KEY: ${{ secrets.Namplifier_TONE3000_KEY }}
+        run: |
+          if (-not $env:Namplifier_TONE3000_KEY) {
+            Write-Warning "Secret Namplifier_TONE3000_KEY is empty — Tone3000 login will not work in this build."
+          }
+          cmake -B build -G "Visual Studio 17 2022" -A x64 `
+            -DNamplifier_TONE3000_KEY="$env:Namplifier_TONE3000_KEY"
+
+      - name: Build Standalone + VST3
+        run: cmake --build build --config Release --target Namplifier_Standalone Namplifier_VST3 --parallel 4
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+
+          $standalone = "dist/Namplifier-windows-standalone"
+          New-Item -ItemType Directory -Force -Path "$standalone/ui/dist" | Out-Null
+          Copy-Item "build/Namplifier_artefacts/Release/Standalone/Namplifier.exe" $standalone
+          Copy-Item -Recurse -Force "ui/dist/*" "$standalone/ui/dist/"
+          Compress-Archive -Path $standalone -DestinationPath "dist/Namplifier-windows-standalone.zip" -Force
+
+          $src = Get-ChildItem "build/Namplifier_artefacts/Release/VST3" -Filter "Namplifier.vst3" -Recurse -Directory |
+            Select-Object -First 1
+          if (-not $src) {
+            $src = Get-ChildItem "build/Namplifier_artefacts/Release/VST3" -Filter "Namplifier.vst3" -Recurse |
+              Select-Object -First 1
+          }
+          if (-not $src) { throw "VST3 artefact not found" }
+
+          $vst3 = "dist/Namplifier-windows-vst3"
+          New-Item -ItemType Directory -Force -Path "$vst3/ui/dist" | Out-Null
+          if ($src.PSIsContainer) {
+            Copy-Item -Recurse -Force $src.FullName $vst3
+          } else {
+            Copy-Item -Force $src.FullName $vst3
+          }
+          Copy-Item -Recurse -Force "ui/dist/*" "$vst3/ui/dist/"
+          Compress-Archive -Path "$vst3/*" -DestinationPath "dist/Namplifier-windows-vst3.zip" -Force
+
+      - name: Upload artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/Namplifier-windows-standalone.zip
+            dist/Namplifier-windows-vst3.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  macos:
+    name: macOS (Standalone + VST3 + AU)
+    runs-on: macos-14
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Build UI
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Configure CMake
+        env:
+          Namplifier_TONE3000_KEY: ${{ secrets.Namplifier_TONE3000_KEY }}
+        run: |
+          if [ -z "$Namplifier_TONE3000_KEY" ]; then
+            echo "::warning::Secret Namplifier_TONE3000_KEY is empty — Tone3000 login will not work in this build."
+          fi
+          cmake -B build -G Xcode \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+            -DNamplifier_TONE3000_KEY="$Namplifier_TONE3000_KEY"
+
+      - name: Build Standalone + VST3 + AU
+        run: |
+          cmake --build build --config Release --target Namplifier_Standalone Namplifier_VST3 Namplifier_AU --parallel 4
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          ART="build/Namplifier_artefacts/Release"
+
+          APP=$(find "$ART/Standalone" -name "Namplifier.app" -type d | head -n 1)
+          if [ -z "$APP" ]; then
+            echo "Standalone .app not found under $ART/Standalone"
+            find "$ART" -maxdepth 4 -print || true
+            exit 1
+          fi
+          STAGE=dist/macos-standalone
+          mkdir -p "$STAGE/ui/dist"
+          ditto "$APP" "$STAGE/Namplifier.app"
+          cp -R ui/dist/. "$STAGE/ui/dist/"
+          ditto -c -k --keepParent "$STAGE" dist/Namplifier-macos-standalone.zip
+
+          VST3=$(find "$ART/VST3" -name "Namplifier.vst3" -type d | head -n 1)
+          if [ -z "$VST3" ]; then
+            echo "VST3 bundle not found"
+            exit 1
+          fi
+          STAGE=dist/macos-vst3
+          mkdir -p "$STAGE/ui/dist"
+          ditto "$VST3" "$STAGE/Namplifier.vst3"
+          cp -R ui/dist/. "$STAGE/ui/dist/"
+          ditto -c -k --keepParent "$STAGE" dist/Namplifier-macos-vst3.zip
+
+          AU=$(find "$ART/AU" -name "Namplifier.component" -type d | head -n 1)
+          if [ -z "$AU" ]; then
+            echo "AU component not found"
+            exit 1
+          fi
+          STAGE=dist/macos-au
+          mkdir -p "$STAGE/ui/dist"
+          ditto "$AU" "$STAGE/Namplifier.component"
+          cp -R ui/dist/. "$STAGE/ui/dist/"
+          ditto -c -k --keepParent "$STAGE" dist/Namplifier-macos-au.zip
+
+          ls -la dist
+
+      - name: Upload artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            dist/Namplifier-macos-standalone.zip
+            dist/Namplifier-macos-vst3.zip
+            dist/Namplifier-macos-au.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    needs: [windows, macos]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Windows artefacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows
+          path: dist
+
+      - name: Download macOS artefacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos
+          path: dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Build ${{ github.run_number }}
+          body: |
+            Automated multi-platform build from `${{ github.ref_name }}`.
+
+            - Commit: `${{ github.sha }}`
+            - Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            ### Windows
+            - `Namplifier-windows-standalone.zip` — exe + `ui/dist` (needs WebView2 Runtime)
+            - `Namplifier-windows-vst3.zip` — VST3 + `ui/dist`
+
+            ### macOS (universal arm64 + x86_64)
+            - `Namplifier-macos-standalone.zip` — `.app` + `ui/dist`
+            - `Namplifier-macos-vst3.zip` — `.vst3` + `ui/dist`
+            - `Namplifier-macos-au.zip` — `.component` + `ui/dist`
+
+            macOS builds are **unsigned**. First launch: right-click → Open, or clear quarantine with `xattr -cr` on the app/plugin.
+
+            Tone3000 features require the `Namplifier_TONE3000_KEY` Actions secret at build time.
+          files: |
+            dist/Namplifier-windows-standalone.zip
+            dist/Namplifier-windows-vst3.zip
+            dist/Namplifier-macos-standalone.zip
+            dist/Namplifier-macos-vst3.zip
+            dist/Namplifier-macos-au.zip
+          fail_on_unmatched_files: true
+          make_latest: true
+          generate_release_notes: true
