@@ -600,6 +600,39 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
       if (auto* d = findDesc())
         ch = d->params.inputChannel;
       ch = juce::jlimit (0, numChans - 1, ch);
+
+      // Reaper "Input 2" is a hardware source already on the track — it usually
+      // arrives on plugin L (ch 0). Users often pick "Channel 2" (R) and starve
+      // the NAM with silence → high-gain self-noise. Prefer the loudest bus
+      // channel when the selection is essentially empty.
+      if (numChans > 1)
+      {
+        auto blockPeak = [&] (int c) -> float
+        {
+          float peak = 0.0f;
+          const float* p = buffer.getReadPointer (c);
+          for (int i = 0; i < numSamples; ++i)
+            peak = juce::jmax (peak, std::abs (p[i]));
+          return peak;
+        };
+
+        const float selPeak = blockPeak (ch);
+        int bestCh = ch;
+        float bestPeak = selPeak;
+        for (int c = 0; c < numChans; ++c)
+        {
+          const float pk = blockPeak (c);
+          if (pk > bestPeak)
+          {
+            bestPeak = pk;
+            bestCh = c;
+          }
+        }
+        if (bestPeak > 1.0e-4f && selPeak < bestPeak * 0.05f)
+          ch = bestCh;
+      }
+
+      mInputChannel = ch;
       juce::FloatVectorOperations::copy (outSig.L.data(), buffer.getReadPointer (ch), numSamples);
       juce::FloatVectorOperations::copy (outSig.R.data(), outSig.L.data(), numSamples);
       continue;

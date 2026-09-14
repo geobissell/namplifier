@@ -423,7 +423,9 @@ juce::String NamplifierAudioProcessorEditor::handleNativeCall (const juce::Strin
       o->setProperty ("masterInDb", processor.getGraphEngine().getMasterInDb());
       o->setProperty ("masterOutDb", processor.getGraphEngine().getMasterOutDb());
       o->setProperty ("clipping", processor.getGraphEngine().wasClipping());
+      const bool standalone = (processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone);
       bool muted = false;
+      if (standalone)
       {
         juce::PropertiesFile::Options opt;
         opt.applicationName = "Namplifier";
@@ -432,6 +434,7 @@ juce::String NamplifierAudioProcessorEditor::handleNativeCall (const juce::Strin
         muted = props.getBoolValue ("shouldMuteInput", false);
       }
       o->setProperty ("inputMuted", muted);
+      o->setProperty ("isStandalone", standalone);
       return ok (juce::var (o));
     }
 

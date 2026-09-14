@@ -1500,7 +1500,7 @@ export default function App() {
                     <StereoVu title="IN" peakL={io.inputPeakL ?? 0} peakR={io.inputPeakR ?? 0} />
                     {inputChoices > 1 && (
                       <label>
-                        Process channel
+                        Plugin buffer channel
                         <select
                           value={p.inputChannel ?? 0}
                           onChange={(e) =>
@@ -1509,10 +1509,18 @@ export default function App() {
                         >
                           {Array.from({ length: inputChoices }, (_, i) => (
                             <option key={i} value={i}>
-                              Channel {i + 1}
+                              {inputChoices === 2
+                                ? i === 0
+                                  ? "Left (1)"
+                                  : "Right (2)"
+                                : `Channel ${i + 1}`}
                             </option>
                           ))}
                         </select>
+                        <small className="muted">
+                          Not the same as Reaper&apos;s track &quot;Input 2&quot;. Guitar on a
+                          stereo track almost always arrives on Left — leave this on Left (1).
+                        </small>
                       </label>
                     )}
                   </div>

@@ -104,22 +104,13 @@ jobs:
           if (-not $src) { throw "VST3 artefact not found" }
 
           $vst3 = "dist/Namplifier-windows-vst3"
-          New-Item -ItemType Directory -Force -Path "$vst3/ui/dist" | Out-Null
+          New-Item -ItemType Directory -Force -Path $vst3 | Out-Null
           if ($src.PSIsContainer) {
             Copy-Item -Recurse -Force $src.FullName $vst3
           } else {
             Copy-Item -Force $src.FullName $vst3
           }
-          # Sidecar next to the .vst3 bundle (findUiDist walks up to this).
-          Copy-Item -Recurse -Force "ui/dist/*" "$vst3/ui/dist/"
-          # Also next to the module binary inside Contents/<arch>/ for hosts that
-          # resolve resources relative to the executable path only.
-          $archDir = Get-ChildItem "$vst3" -Directory -Recurse -Filter "x86_64-win" |
-            Select-Object -First 1
-          if ($archDir) {
-            New-Item -ItemType Directory -Force -Path "$($archDir.FullName)/ui/dist" | Out-Null
-            Copy-Item -Recurse -Force "ui/dist/*" "$($archDir.FullName)/ui/dist/"
-          }
+          # UI is embedded in the binary — do not ship a sidecar ui/dist for VST3.
           Compress-Archive -Path "$vst3/*" -DestinationPath "dist/Namplifier-windows-vst3.zip" -Force
 
       - name: Upload artefacts
@@ -197,22 +188,9 @@ jobs:
             exit 1
           fi
           STAGE=dist/macos-vst3
-          mkdir -p "$STAGE/ui/dist"
+          mkdir -p "$STAGE"
           ditto "$VST3" "$STAGE/Namplifier.vst3"
-          cp -R ui/dist/. "$STAGE/ui/dist/"
-          # Also embed ui/dist beside the module binary inside the bundle.
-          ARCH_DIR=$(find "$STAGE/Namplifier.vst3" -type d \( -name "MacOS" -o -name "x86_64-osx" -o -name "arm64-osx" -o -name "Contents" \) | head -n 1)
-          # Prefer Contents/Resources or next to the binary in MacOS/
-          MACOS_DIR=$(find "$STAGE/Namplifier.vst3" -type d -name "MacOS" | head -n 1)
-          if [ -n "$MACOS_DIR" ]; then
-            mkdir -p "$MACOS_DIR/ui/dist"
-            cp -R ui/dist/. "$MACOS_DIR/ui/dist/"
-          fi
-          RESOURCES_DIR=$(find "$STAGE/Namplifier.vst3" -type d -name "Resources" | head -n 1)
-          if [ -n "$RESOURCES_DIR" ]; then
-            mkdir -p "$RESOURCES_DIR/ui/dist"
-            cp -R ui/dist/. "$RESOURCES_DIR/ui/dist/"
-          fi
+          # UI is embedded — no sidecar ui/dist for VST3.
           ditto -c -k --keepParent "$STAGE" dist/Namplifier-macos-vst3.zip
 
           AU=$(find "$ART/AU" -name "Namplifier.component" -type d | head -n 1)
@@ -221,9 +199,8 @@ jobs:
             exit 1
           fi
           STAGE=dist/macos-au
-          mkdir -p "$STAGE/ui/dist"
+          mkdir -p "$STAGE"
           ditto "$AU" "$STAGE/Namplifier.component"
-          cp -R ui/dist/. "$STAGE/ui/dist/"
           ditto -c -k --keepParent "$STAGE" dist/Namplifier-macos-au.zip
 
           ls -la dist
@@ -273,12 +250,12 @@ jobs:
 
             ### Windows
             - `Namplifier-windows-standalone.zip` — exe + `ui/dist` (needs WebView2 Runtime)
-            - `Namplifier-windows-vst3.zip` — VST3 + `ui/dist`
+            - `Namplifier-windows-vst3.zip` — VST3 only (UI embedded)
 
             ### macOS (universal arm64 + x86_64)
             - `Namplifier-macos-standalone.zip` — `.app` + `ui/dist`
-            - `Namplifier-macos-vst3.zip` — `.vst3` + `ui/dist`
-            - `Namplifier-macos-au.zip` — `.component` + `ui/dist`
+            - `Namplifier-macos-vst3.zip` — `.vst3` only (UI embedded)
+            - `Namplifier-macos-au.zip` — `.component` only (UI embedded)
 
             macOS builds are **unsigned**. First launch: right-click → Open, or clear quarantine with `xattr -cr` on the app/plugin.
 

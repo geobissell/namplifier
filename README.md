@@ -81,7 +81,7 @@ Namplifier.exe
 ui/dist/...
 ```
 
-VST3 install: keep `ui/dist` next to `Namplifier.vst3` (as in the release zip), or rely on the UI embedded in the binary (CI builds). Do not install only the `.vst3` file from a zip that also contains `ui/dist` unless you rebuilt with a full `ui/dist` at CMake configure time.
+VST3 / AU: install the plugin bundle only — the UI is embedded in CI builds. Standalone still ships with `ui/dist` next to the exe for convenience.
 
 ## CI / Releases
 

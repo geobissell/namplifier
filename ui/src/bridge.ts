@@ -209,7 +209,7 @@ function demoGraph(): GraphDocument {
     version: 1,
     name: "Amp -> Cab",
     nodes: [
-      { id: "input", type: "input", x: 60, y: 200, params: { ...emptyParams(), inputChannel: 1 } },
+      { id: "input", type: "input", x: 60, y: 200, params: { ...emptyParams(), inputChannel: 0 } },
       { id: "nam1", type: "nam", x: 220, y: 200, params: { ...emptyParams(), displayName: "NAM Amp" } },
       { id: "ir1", type: "ir", x: 400, y: 200, params: { ...emptyParams(), displayName: "IR Cab" } },
       { id: "output", type: "output", x: 580, y: 200, params: emptyParams() },
