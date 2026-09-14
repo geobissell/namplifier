@@ -51,6 +51,7 @@ void GraphEngine::prepare (double sampleRate, int maxBlockSize)
     mMono.setSize (1, maxBlockSize);
     mBranchA.setSize (1, maxBlockSize);
     mBranchB.setSize (1, maxBlockSize);
+    mDryCopy.setSize (juce::jmax (2, mHostIns), maxBlockSize);
     // Host may call prepare before any setGraph (common in VST). Ensure runtime exists.
     if (mNodes.empty() && ! mDocument.nodes.empty())
       rebuildLocked();
@@ -537,9 +538,11 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
   smoothPeak (mInputPeakR, hostInR);
 
   // Keep a dry copy for failover if the graph somehow kills a live input.
-  juce::AudioBuffer<float> dryCopy (numChans, numSamples);
+  // Reuse a member buffer — heap-allocating every callback caused standalone xruns/lag.
+  if (mDryCopy.getNumChannels() < numChans || mDryCopy.getNumSamples() < numSamples)
+    mDryCopy.setSize (numChans, numSamples, false, false, true);
   for (int c = 0; c < numChans; ++c)
-    dryCopy.copyFrom (c, 0, buffer, c, 0, numSamples);
+    mDryCopy.copyFrom (c, 0, buffer, c, 0, numSamples);
 
   // Global input trim — pull down hot interfaces before NAM
   const float inG = juce::Decibels::decibelsToGain (mMasterInDb.load());
@@ -935,7 +938,7 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
   if (hostInPeak > 1.0e-4f && outPeak < 1.0e-5f)
   {
     for (int c = 0; c < numChans; ++c)
-      buffer.copyFrom (c, 0, dryCopy, c, 0, numSamples);
+      buffer.copyFrom (c, 0, mDryCopy, c, 0, numSamples);
     meterL = hostInL;
     meterR = hostInR;
     outPeak = hostInPeak;

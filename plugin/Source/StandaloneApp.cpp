@@ -47,6 +47,14 @@ public:
         settings->setValue ("windowX", 120);
       if (settings->getIntValue ("windowY", 100) <= 0)
         settings->setValue ("windowY", 80);
+
+      // Builds without ASIO can't open a saved ASIO device — leftover XML left only
+      // the old sample rate (often 88.2 kHz) in the combo and looked "broken".
+     #if ! JUCE_ASIO
+      if (auto xml = settings->getXmlValue ("audioSetup"))
+        if (xml->getStringAttribute ("deviceType").equalsIgnoreCase ("ASIO"))
+          settings->removeValue ("audioSetup");
+     #endif
     }
   }
 

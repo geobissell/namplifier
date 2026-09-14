@@ -22,14 +22,40 @@ endif()
 
 set(JUCE_WEBVIEW2_PACKAGE_LOCATION "$ENV{LOCALAPPDATA}/PackageManagement/NuGet/Packages" CACHE PATH "WebView2 NuGet packages root")
 
-# ASIO headers (Steinberg SDK subset vendored for JUCE_ASIO; see third_party/asiosdk/LICENSE.txt)
+include(FetchContent)
+
+# ASIO (Windows): Steinberg SDK dual-licensed proprietary / GPLv3.
+# Prefer vendored headers; otherwise fetch the official GPL mirror so CI releases
+# still ship ASIO (without this, standalone falls back to WASAPI and looks "broken").
 set(Namplifier_HAS_ASIO FALSE)
-if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/asiosdk/common/iasiodrv.h")
-  set(Namplifier_HAS_ASIO TRUE)
-  message(STATUS "ASIO enabled via third_party/asiosdk")
+set(Namplifier_ASIO_INCLUDE "")
+if(WIN32)
+  set(_asio_local "${CMAKE_CURRENT_SOURCE_DIR}/third_party/asiosdk/common/iasiodrv.h")
+  if(EXISTS "${_asio_local}")
+    set(Namplifier_HAS_ASIO TRUE)
+    set(Namplifier_ASIO_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/asiosdk/common")
+    message(STATUS "ASIO enabled via third_party/asiosdk")
+  else()
+    FetchContent_Declare(
+      asiosdk
+      GIT_REPOSITORY https://github.com/audiosdk/asio.git
+      GIT_TAG main
+      GIT_SHALLOW TRUE
+    )
+    FetchContent_GetProperties(asiosdk)
+    if(NOT asiosdk_POPULATED)
+      FetchContent_Populate(asiosdk)
+    endif()
+    if(EXISTS "${asiosdk_SOURCE_DIR}/common/iasiodrv.h")
+      set(Namplifier_HAS_ASIO TRUE)
+      set(Namplifier_ASIO_INCLUDE "${asiosdk_SOURCE_DIR}/common")
+      message(STATUS "ASIO enabled via FetchContent (audiosdk/asio)")
+    else()
+      message(WARNING "ASIO SDK headers missing — Windows builds will have WASAPI only")
+    endif()
+  endif()
 endif()
 
-include(FetchContent)
 FetchContent_Declare(
   JUCE
   GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
@@ -175,8 +201,7 @@ if(WIN32)
 endif()
 if(Namplifier_HAS_ASIO)
   target_compile_definitions(Namplifier PUBLIC JUCE_ASIO=1)
-  target_include_directories(Namplifier PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/asiosdk/common")
+  target_include_directories(Namplifier PRIVATE "${Namplifier_ASIO_INCLUDE}")
 endif()
 
 target_include_directories(Namplifier PRIVATE

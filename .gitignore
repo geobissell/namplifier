@@ -54,10 +54,14 @@ build_nam_test.cmake
 *.dll
 !third_party/**/*.dll
 
-# Large / licensed SDKs (keep README only — see that file)
+# ASIO SDK: track headers (GPLv3 option) so CI ships ASIO; ignore fetch scratch + PDFs
+third_party/asiosdk_fetch/
 third_party/asiosdk/**
 !third_party/asiosdk/README.md
-!third_party/asiosdk/README.md/**
+!third_party/asiosdk/LICENSE.txt
+!third_party/asiosdk/common/
+!third_party/asiosdk/common/*.h
+!third_party/asiosdk/common/LICENSE.txt
 
 # User content / caches
 *.nam

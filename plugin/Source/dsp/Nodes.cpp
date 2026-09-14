@@ -93,12 +93,12 @@ void NamRuntimeNode::processMono (float* buffer, int numSamples)
   if (numSamples > mMaxBlock)
     prepare (mSampleRate, numSamples);
 
-  // High-gain NAMs turn digital silence into a constant hiss/whistle. If the host
-  // isn't feeding us (bus negotiation / monitoring), stay silent instead.
+  // High-gain NAMs turn near-silence / denormal noise into a constant hiss.
+  // Gate well below a real guitar but above digital floor (~-80 dBFS).
   float inPeak = 0.0f;
   for (int i = 0; i < numSamples; ++i)
     inPeak = juce::jmax (inPeak, std::abs (buffer[i]));
-  if (inPeak < 1.0e-5f)
+  if (inPeak < 1.0e-4f)
   {
     juce::FloatVectorOperations::clear (buffer, numSamples);
     return;

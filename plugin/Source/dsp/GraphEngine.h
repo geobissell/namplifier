@@ -81,6 +81,7 @@ private:
   juce::AudioBuffer<float> mMono;
   juce::AudioBuffer<float> mBranchA;
   juce::AudioBuffer<float> mBranchB;
+  juce::AudioBuffer<float> mDryCopy;
   std::atomic<float> mCpuLoad { 0.0f };
   std::atomic<float> mInputPeak { 0.0f };
   std::atomic<float> mOutputPeak { 0.0f };

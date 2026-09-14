@@ -1,12 +1,8 @@
-# ASIO SDK (optional)
+# ASIO SDK (Windows)
 
-Namplifier enables ASIO when this folder contains the Steinberg ASIO SDK
-(`common/iasiodrv.h`).
+Steinberg ASIO SDK headers used with `JUCE_ASIO=1`.
 
-Do **not** commit the SDK unless your license allows it.
+This project is AGPL-3.0, so we use the SDK under its **GPLv3** dual-license option
+(see `LICENSE.txt`). Headers in `common/` are committed so CI Windows builds include ASIO.
 
-1. Download from https://www.steinberg.net/asiosdk
-2. Extract so you have: `third_party/asiosdk/common/iasiodrv.h`
-3. Reconfigure CMake — you should see `ASIO enabled via third_party/asiosdk`
-
-Without the SDK, Namplifier still builds (WASAPI / other JUCE backends).
+If headers are missing, CMake fetches https://github.com/audiosdk/asio automatically.
