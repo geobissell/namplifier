@@ -11,6 +11,7 @@ namespace namplifier
 GraphEngine::GraphEngine()
 {
   mDocument = GraphDocument::makeAmpCabStarter();
+  rebuildLocked(); // Must build runtime nodes — UI getGraph alone never calls setGraph.
   mWorker = std::thread ([this]
   {
     while (mRunning.load())
@@ -50,8 +51,9 @@ void GraphEngine::prepare (double sampleRate, int maxBlockSize)
     mMono.setSize (1, maxBlockSize);
     mBranchA.setSize (1, maxBlockSize);
     mBranchB.setSize (1, maxBlockSize);
-    // Do not rebuildLocked here — that was dropping SR updates on reused NAM nodes
-    // and left the resampler stuck on the previous host rate (88.2k sounded bassless).
+    // Host may call prepare before any setGraph (common in VST). Ensure runtime exists.
+    if (mNodes.empty() && ! mDocument.nodes.empty())
+      rebuildLocked();
     for (auto& [id, node] : mNodes)
     {
       juce::String irPath;
@@ -145,6 +147,10 @@ void GraphEngine::loadFileOntoNode (const juce::String& nodeId, const juce::File
   NodeType type = NodeType::Bypass;
   {
     std::lock_guard lock (mGraphMutex);
+    // UI can show mDocument while runtime was never built (getGraph without setGraph).
+    if (mNodes.empty() && ! mDocument.nodes.empty())
+      rebuildLocked();
+
     auto it = mNodes.find (nodeId);
     if (it == mNodes.end())
       return;
@@ -496,6 +502,16 @@ void GraphEngine::process (juce::AudioBuffer<float>& buffer)
     return;
 
   std::lock_guard lock (mGraphMutex);
+
+  // Never wipe the host buffer if the runtime graph isn't built — that produced
+  // dead silence / noise-floor hiss in VST until the UI happened to call setGraph.
+  if (mNodes.empty() || mOrder.empty())
+  {
+    if (! mDocument.nodes.empty())
+      rebuildLocked();
+    if (mNodes.empty() || mOrder.empty())
+      return; // leave host buffer alone (passthrough)
+  }
 
   auto channelPeak = [&] (int ch) -> float
   {

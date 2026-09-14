@@ -47,7 +47,6 @@ private:
   namplifier::Tone3000Client tone3000;
   namplifier::PresetManager presets;
   namplifier::LibraryManager library;
-  juce::AudioBuffer<float> mWorkBuffer;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NamplifierAudioProcessor)
 };
